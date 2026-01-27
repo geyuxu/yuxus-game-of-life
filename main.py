@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-High-performance Pygame renderer for the neuroevolution simulation.
+Yuxu's Game of Life - High-performance Pygame Renderer
 
 Features:
 - 60+ FPS real-time rendering
@@ -31,7 +31,8 @@ from scipy.ndimage import label
 
 # Import simulation
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from evolution import GPULifeGame, NUM_CHEMICALS, genome_to_color, MATE_GENOME_THRESHOLD
+from evolution import GPULifeGame, genome_to_color
+from config import NUM_CHEMICALS, MATE_GENOME_THRESHOLD
 
 # =============================================================================
 # CONSTANTS
@@ -40,11 +41,11 @@ WINDOW_WIDTH = 1600
 WINDOW_HEIGHT = 900
 FPS_TARGET = 60
 
-# UI Colors (White theme)
-COLOR_BG = (255, 255, 255)      # White background
-COLOR_TEXT = (30, 30, 30)       # Dark text for readability
-COLOR_GRID = (200, 200, 200)    # Light gray grid
-COLOR_PANEL = (245, 245, 245)   # Light gray panel
+# UI Colors (Dark theme)
+COLOR_BG = (0, 0, 0)            # Black background
+COLOR_TEXT = (220, 220, 220)    # Light text for readability on dark background
+COLOR_GRID = (40, 40, 40)       # Dark gray grid
+COLOR_PANEL = (20, 20, 20)      # Very dark gray panel
 
 # =============================================================================
 # PYGAME RENDERER
@@ -53,7 +54,7 @@ COLOR_PANEL = (245, 245, 245)   # Light gray panel
 class PyGameRenderer:
     def __init__(self, game):
         pygame.init()
-        pygame.display.set_caption('Neuroevolution Arena - Pygame Renderer')
+        pygame.display.set_caption("Yuxu's Game of Life")
 
         self.game = game
         self.window = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -97,6 +98,12 @@ class PyGameRenderer:
         self.main_surface = pygame.Surface((self.main_panel_width, WINDOW_HEIGHT))
         self.stats_surface = pygame.Surface((self.stats_panel_width, WINDOW_HEIGHT))
 
+        # High-resolution render surface for smooth rendering (2x resolution)
+        self.render_scale = 2  # Render at 2x resolution for smoothing
+        self.hires_surface = pygame.Surface(
+            (self.main_panel_width * self.render_scale, WINDOW_HEIGHT * self.render_scale)
+        )
+
         print("\n" + "="*60)
         print("Pygame Renderer Started")
         print("="*60)
@@ -137,15 +144,19 @@ class PyGameRenderer:
         return int(wx), int(wy)
 
     def render_environment(self):
-        """Render the main simulation environment."""
-        self.main_surface.fill(COLOR_BG)
+        """Render the main simulation environment with smooth anti-aliasing."""
+        # Clear high-resolution surface
+        self.hires_surface.fill(COLOR_BG)
 
         # Get data from game
         alive = self.game.alive.cpu().numpy()
         energy = self.game.energy.cpu().numpy()
         genome = self.game.genome.cpu().numpy()
 
-        # Render cells
+        # Scaling factor for high-res rendering
+        scale = self.render_scale
+
+        # Render cells as filled rectangles for connected tissue appearance
         for y in range(self.game.size):
             for x in range(self.game.size):
                 if not alive[y, x]:
@@ -159,52 +170,45 @@ class PyGameRenderer:
                 energy_norm = min(1.0, energy[y, x] / 100.0)
                 color = tuple(int(c * 255 * energy_norm) for c in base_color)
 
-                # Calculate screen position
+                # Calculate screen position (scaled for high-res)
                 sx, sy = self.world_to_screen(x, y)
+                sx_hires = int(sx * scale)
+                sy_hires = int(sy * scale)
+                cell_size_hires = int(self.cell_size * scale)
 
-                # Draw cell as a circle (cell-like appearance)
-                center_x = int(sx + self.cell_size / 2)
-                center_y = int(sy + self.cell_size / 2)
-                radius = max(1, int(self.cell_size * 0.45))  # Slightly smaller than cell to avoid overlap
-                pygame.draw.circle(self.main_surface, color, (center_x, center_y), radius)
+                # Draw cell as filled rectangle on high-res surface
+                rect = pygame.Rect(sx_hires, sy_hires, cell_size_hires, cell_size_hires)
+                pygame.draw.rect(self.hires_surface, color, rect)
 
-        # Draw organization boundaries (genome-based)
-        # Check 4-connected neighbors and draw boundary lines where genomes differ
-        boundary_color = (255, 50, 50)  # Bright red boundaries - very visible!
-        boundary_width = 3  # Thicker lines for better visibility
-        for y in range(self.game.size):
-            for x in range(self.game.size):
-                if not alive[y, x]:
-                    continue
+                # Draw subtle internal borders for same-species neighbors (visual texture)
+                border_color = tuple(max(0, c - 15) for c in color)
 
-                cell_genome = genome[y, x]
-                sx, sy = self.world_to_screen(x, y)
+                # Check if neighbors are similar species
+                dirs = [(1, 0), (0, 1)]  # Right and bottom
+                for dx, dy in dirs:
+                    nx = (x + dx) % self.game.size
+                    ny = (y + dy) % self.game.size
 
-                # Check right neighbor
-                x_right = (x + 1) % self.game.size
-                if alive[y, x_right]:
-                    neighbor_genome = genome[y, x_right]
-                    genome_dist = np.linalg.norm(cell_genome - neighbor_genome)
-                    if genome_dist >= MATE_GENOME_THRESHOLD:  # Different organization
-                        # Draw vertical boundary line on right edge
-                        line_x = int(sx + self.cell_size)
-                        line_y_start = int(sy)
-                        line_y_end = int(sy + self.cell_size)
-                        pygame.draw.line(self.main_surface, boundary_color,
-                                       (line_x, line_y_start), (line_x, line_y_end), boundary_width)
+                    if alive[ny, nx]:
+                        neighbor_genome = genome[ny, nx]
+                        genome_dist = np.linalg.norm(cell_genome - neighbor_genome)
 
-                # Check bottom neighbor
-                y_bottom = (y + 1) % self.game.size
-                if alive[y_bottom, x]:
-                    neighbor_genome = genome[y_bottom, x]
-                    genome_dist = np.linalg.norm(cell_genome - neighbor_genome)
-                    if genome_dist >= MATE_GENOME_THRESHOLD:  # Different organization
-                        # Draw horizontal boundary line on bottom edge
-                        line_x_start = int(sx)
-                        line_x_end = int(sx + self.cell_size)
-                        line_y = int(sy + self.cell_size)
-                        pygame.draw.line(self.main_surface, boundary_color,
-                                       (line_x_start, line_y), (line_x_end, line_y), boundary_width)
+                        # Same species: draw subtle internal line
+                        if genome_dist < MATE_GENOME_THRESHOLD:
+                            if dx == 1:  # Right neighbor
+                                line_x = sx_hires + cell_size_hires
+                                pygame.draw.line(self.hires_surface, border_color,
+                                               (line_x, sy_hires), (line_x, sy_hires + cell_size_hires), scale)
+                            else:  # Bottom neighbor
+                                line_y = sy_hires + cell_size_hires
+                                pygame.draw.line(self.hires_surface, border_color,
+                                               (sx_hires, line_y), (sx_hires + cell_size_hires, line_y), scale)
+
+        # Organization boundaries removed for cleaner appearance
+        # (Previously drew red boundaries between different species)
+
+        # Smooth scale down to main surface (this provides anti-aliasing)
+        pygame.transform.smoothscale(self.hires_surface, self.main_surface.get_size(), self.main_surface)
 
         # Chemical overlay
         if self.show_chemical:
@@ -293,7 +297,7 @@ class PyGameRenderer:
     def cluster_genomes(self, max_cells=500):
         """Cluster alive cells by genome similarity to find emergent species.
 
-        Uses sampling for performance when population is large.
+        Uses sampling to find cluster centers, then assigns all cells.
         """
         alive = self.game.alive.cpu().numpy()
         genome = self.game.genome.cpu().numpy()
@@ -302,32 +306,35 @@ class PyGameRenderer:
             return []
 
         # Get all alive cell genomes
-        alive_genomes = genome[alive]  # [N, 12]
-        N = len(alive_genomes)
+        alive_genomes = genome[alive]  # [N_total, 12]
+        N_total = len(alive_genomes)
 
-        if N == 0:
+        if N_total == 0:
             return []
 
-        # Sample if too many cells (for performance)
-        if N > max_cells:
-            sample_indices = np.random.choice(N, max_cells, replace=False)
-            alive_genomes = alive_genomes[sample_indices]
-            N = max_cells
+        # Step 1: Sample for clustering (if needed)
+        if N_total > max_cells:
+            sample_indices = np.random.choice(N_total, max_cells, replace=False)
+            sample_genomes = alive_genomes[sample_indices]
+            N_sample = max_cells
+        else:
+            sample_genomes = alive_genomes
+            N_sample = N_total
 
-        # Build adjacency matrix: cells are connected if genome distance < threshold
-        adjacency = np.zeros((N, N), dtype=bool)
-        for i in range(N):
-            for j in range(i+1, N):
-                dist = np.linalg.norm(alive_genomes[i] - alive_genomes[j])
+        # Step 2: Build adjacency matrix on sample
+        adjacency = np.zeros((N_sample, N_sample), dtype=bool)
+        for i in range(N_sample):
+            for j in range(i+1, N_sample):
+                dist = np.linalg.norm(sample_genomes[i] - sample_genomes[j])
                 if dist < MATE_GENOME_THRESHOLD:
                     adjacency[i, j] = True
                     adjacency[j, i] = True
 
-        # Find connected components (clusters) using BFS
-        clusters = []
-        visited = np.zeros(N, dtype=bool)
+        # Step 3: Find cluster centers from sample using BFS
+        cluster_centers = []
+        visited = np.zeros(N_sample, dtype=bool)
 
-        for i in range(N):
+        for i in range(N_sample):
             if visited[i]:
                 continue
 
@@ -346,16 +353,34 @@ class PyGameRenderer:
                     visited[neighbor] = True
                     queue.append(neighbor)
 
-            # Calculate cluster statistics
-            cluster_genomes = alive_genomes[cluster_indices]
-            avg_genome = cluster_genomes.mean(axis=0)
-            color = genome_to_color(avg_genome)
+            if cluster_indices:
+                # Compute cluster center (mean genome)
+                cluster_genomes = sample_genomes[cluster_indices]
+                center = cluster_genomes.mean(axis=0)
+                cluster_centers.append(center)
 
-            clusters.append({
-                'size': len(cluster_indices),
-                'color': color,
-                'avg_genome': avg_genome
-            })
+        if len(cluster_centers) == 0:
+            return []
+
+        # Step 4: Assign ALL cells to nearest cluster
+        cluster_centers_array = np.array(cluster_centers)  # [K, 12]
+        cluster_counts = [0] * len(cluster_centers)
+
+        for genome_vec in alive_genomes:
+            # Find nearest cluster center
+            distances = np.linalg.norm(cluster_centers_array - genome_vec, axis=1)
+            nearest_cluster = np.argmin(distances)
+            cluster_counts[nearest_cluster] += 1
+
+        # Step 5: Build cluster info
+        clusters = []
+        for idx, center in enumerate(cluster_centers):
+            if cluster_counts[idx] > 0:
+                clusters.append({
+                    'size': cluster_counts[idx],
+                    'color': genome_to_color(center),
+                    'avg_genome': center
+                })
 
         # Sort by size (largest first)
         clusters.sort(key=lambda x: x['size'], reverse=True)
@@ -384,6 +409,9 @@ class PyGameRenderer:
         clusters = self.cached_clusters
         num_clusters = len(clusters)
 
+        # Get validation stats
+        val_stats = self.game.get_validation_stats()
+
         stats_lines = [
             f"Generation: {self.game.generation:,}",
             f"Population: {total_pop:,}",
@@ -397,6 +425,27 @@ class PyGameRenderer:
             f"Chemical: {'ON' if self.show_chemical else 'OFF'}",
             f"Grid: {'ON' if self.show_grid else 'OFF'}",
         ]
+
+        # Add validation stats if available
+        if val_stats:
+            total = val_stats['gen0_count'] + val_stats['gen1_5_count'] + val_stats['gen6plus_count'] + val_stats['random_count']
+            if total > 0:
+                stats_lines.extend([
+                    f"",
+                    f"--- Lineage Tracking ---",
+                    f"Trained: {val_stats['trained_total']} ({val_stats['trained_total']/total*100:.0f}%)",
+                    f"  Gen0: {val_stats['gen0_count']}",
+                    f"  Gen1-5: {val_stats['gen1_5_count']}",
+                    f"  Gen6+: {val_stats['gen6plus_count']}",
+                    f"Random: {val_stats['random_count']} ({val_stats['random_count']/total*100:.0f}%)",
+                    f"",
+                    f"Trained vs Random:",
+                    f"Lifetime: {val_stats['trained_lineage_avg_lifetime']:.0f} vs {val_stats['random_avg_lifetime']:.0f}",
+                ])
+                if val_stats['random_avg_lifetime'] > 0 and val_stats['trained_lineage_avg_lifetime'] > 0:
+                    ratio = val_stats['trained_lineage_avg_lifetime'] / val_stats['random_avg_lifetime']
+                    symbol = "✓" if ratio > 1 else "✗"
+                    stats_lines.append(f"{symbol} {ratio:.2f}x performance")
 
         for line in stats_lines:
             text = self.font_small.render(line, True, COLOR_TEXT)

@@ -40,8 +40,10 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Option 1: Matplotlib Renderer (Default)
+
 ```bash
-# Run simulation (default 20x20 grid)
+# Run simulation with matplotlib (slower, good for analysis)
 python main.py
 
 # Run with larger grid
@@ -51,7 +53,37 @@ python main.py --grid 30
 python main.py --validate
 ```
 
-### Command Line Options
+### Option 2: Web Interface (Recommended)
+
+```bash
+# Start web interface with real-time chemical visualization
+python web_interface.py
+
+# Open browser to http://localhost:8050
+# Features:
+# - Real-time population charts
+# - 4 chemical field heatmaps
+# - Species statistics table
+# - Pause/Resume/Reset controls
+```
+
+### Option 3: Pygame Renderer (Fastest)
+
+```bash
+# High-performance renderer with 60+ FPS
+python pygame_renderer.py
+
+# Keyboard controls:
+# - SPACE: Pause/Resume
+# - R: Reset simulation
+# - C: Toggle chemical overlay
+# - G: Toggle grid
+# - +/-: Adjust speed (1x to 10x)
+# - Mouse wheel: Zoom
+# - Click+Drag: Pan camera
+```
+
+### Command Line Options (main.py only)
 
 | Option | Description |
 |--------|-------------|
@@ -128,9 +160,11 @@ REWARD_REPRODUCE = 1.5
 
 ```
 digital-primordial-soup/
-├── main.py           # Main simulation code
-├── best_brain.pt     # Saved neural network weights
-├── requirements.txt  # Python dependencies
+├── main.py              # Main simulation code (matplotlib renderer)
+├── web_interface.py     # Web-based dashboard (Plotly Dash)
+├── pygame_renderer.py   # High-performance renderer (Pygame)
+├── best_brain.pt        # Saved neural network weights
+├── requirements.txt     # Python dependencies
 └── README.md
 ```
 
@@ -141,10 +175,19 @@ digital-primordial-soup/
 - NumPy
 - Matplotlib
 - SciPy (for geographic speciation blob detection)
+- Plotly + Dash (for web interface)
+- Pygame (for high-performance renderer)
 
 ## Version History
 
-### v1.1-chemical-signaling (current)
+### v1.2-professional-viz (current)
+- Web interface with Plotly Dash (real-time dashboard)
+- Pygame high-performance renderer (60+ FPS)
+- Chemical field heatmap visualization (4 overlays)
+- Interactive controls and camera system
+- 3 rendering options: matplotlib, web, pygame
+
+### v1.1-chemical-signaling
 - Chemical signaling system with 4 evolvable chemical types
 - Dynamic combat (10%-90% success based on chemical field strength)
 - Geographic speciation via blob detection (every 100 generations)
@@ -180,8 +223,10 @@ MIT License
 
 ## 运行方式
 
+### 选项 1：Matplotlib 渲染器（默认）
+
 ```bash
-# 默认模式
+# 使用 matplotlib 运行（较慢，适合分析）
 python main.py
 
 # 大网格
@@ -189,6 +234,36 @@ python main.py --grid 30
 
 # 验证模式：测试训练网络 vs 随机网络
 python main.py --validate
+```
+
+### 选项 2：Web 界面（推荐）
+
+```bash
+# 启动 Web 界面，实时化学场可视化
+python web_interface.py
+
+# 在浏览器打开 http://localhost:8050
+# 功能：
+# - 实时种群图表
+# - 4 种化学场热力图
+# - 物种统计表
+# - 暂停/恢复/重置控制
+```
+
+### 选项 3：Pygame 渲染器（最快）
+
+```bash
+# 高性能渲染器，60+ FPS
+python pygame_renderer.py
+
+# 键盘控制：
+# - SPACE：暂停/恢复
+# - R：重置模拟
+# - C：切换化学场覆盖层
+# - G：切换网格
+# - +/-：调整速度（1x 到 10x）
+# - 鼠标滚轮：缩放
+# - 点击拖拽：平移相机
 ```
 
 ## 工作原理

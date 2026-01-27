@@ -84,6 +84,13 @@ CHART_UPDATE_INTERVAL = 5   # Update charts every N frames (reduces matplotlib o
 # Combat
 ATTACK_BONUS = 1.2  # Energy multiplier when eating prey
 
+# Chemical signaling (for cell differentiation)
+NUM_CHEMICALS = 4           # Number of chemical types
+CHEMICAL_DIFFUSION = 0.3    # Diffusion rate (0-1)
+CHEMICAL_DECAY = 0.05       # Decay rate per step
+CHEMICAL_SECRETION = 0.1    # Amount secreted per step
+CHEMICAL_INPUT_WEIGHT = 0.2 # How much chemicals affect NN input
+
 # Evolution
 MUTATION_RATE = 0.1
 DOMINANCE_THRESHOLD = 0.75  # Species split when >75% of population
@@ -102,7 +109,7 @@ SAVE_INTERVAL = 50
 ELITE_RATIO = 0.2
 
 # Neural Network Architecture
-INPUT_SIZE = 20
+INPUT_SIZE = 20 + NUM_CHEMICALS  # Original 20 + chemical concentrations
 NUM_ACTIONS = 7
 ACTION_STAY = 0
 ACTION_UP = 1
@@ -142,6 +149,12 @@ def generate_random_color(index: int) -> tuple:
 def create_species_config(sp_id: int, num_total: int, name: str = None) -> dict:
     """Create configuration for a single species."""
     prey_list = [j for j in range(num_total) if j != sp_id]
+
+    # Initialize random chemical preferences (evolvable)
+    # Each species has affinity to different chemicals
+    np.random.seed(sp_id + 5000)  # Different seed for chemical preferences
+    chemical_affinity = np.random.randn(NUM_CHEMICALS) * 0.5
+
     return {
         'name': name or f'S{sp_id}',
         'color': generate_random_color(sp_id),
@@ -155,6 +168,7 @@ def create_species_config(sp_id: int, num_total: int, name: str = None) -> dict:
         'parent': None,
         'extinct': False,
         'extinct_gen': None,  # Generation when species went extinct (for recycling)
+        'chemical_affinity': chemical_affinity.tolist(),  # Preference for each chemical type
     }
 
 
@@ -202,6 +216,10 @@ def create_child_species(parent_id: int, hidden_delta: int = HIDDEN_SIZE_INCREME
         parent_hidden = SPECIES_CONFIG[parent_id]['hidden_size']
         new_hidden = max(MIN_HIDDEN_SIZE, min(parent_hidden + hidden_delta, MAX_HIDDEN_SIZE))
 
+        # Inherit and mutate chemical affinity from parent
+        parent_chem = np.array(SPECIES_CONFIG[parent_id]['chemical_affinity'])
+        child_chem = parent_chem + np.random.randn(NUM_CHEMICALS) * SPLIT_MUTATION_RATE
+
         SPECIES_CONFIG[new_id] = {
             'name': new_name,
             'color': generate_random_color(new_id),
@@ -215,6 +233,7 @@ def create_child_species(parent_id: int, hidden_delta: int = HIDDEN_SIZE_INCREME
             'parent': parent_id,
             'extinct': False,
             'extinct_gen': None,
+            'chemical_affinity': child_chem.tolist(),
         }
 
         # Reset child count for recycled slot
@@ -241,6 +260,11 @@ def create_child_species(parent_id: int, hidden_delta: int = HIDDEN_SIZE_INCREME
         parent_hidden = SPECIES_CONFIG[parent_id]['hidden_size']
         new_hidden = max(MIN_HIDDEN_SIZE, min(parent_hidden + hidden_delta, MAX_HIDDEN_SIZE))
         new_config['hidden_size'] = new_hidden
+
+        # Inherit and mutate chemical affinity from parent
+        parent_chem = np.array(SPECIES_CONFIG[parent_id]['chemical_affinity'])
+        child_chem = parent_chem + np.random.randn(NUM_CHEMICALS) * SPLIT_MUTATION_RATE
+        new_config['chemical_affinity'] = child_chem.tolist()
 
         SPECIES_CONFIG.append(new_config)
 
@@ -326,6 +350,9 @@ class GPULifeGame:
         self.species = torch.zeros((size, size), dtype=torch.int32, device=DEVICE)
         self.hunger = torch.zeros((size, size), dtype=torch.int32, device=DEVICE)
         self.is_newborn = torch.zeros((size, size), dtype=torch.bool, device=DEVICE)
+
+        # Chemical signaling field [NUM_CHEMICALS, size, size]
+        self.chemicals = torch.zeros((NUM_CHEMICALS, size, size), dtype=torch.float32, device=DEVICE)
 
         # Reinforcement learning tensors
         self.reward = torch.zeros((size, size), dtype=torch.float32, device=DEVICE)
@@ -498,13 +525,17 @@ class GPULifeGame:
         same_count = same.sum(dim=-1, keepdim=True)
         diff_count = neighbor_alive.sum(dim=-1, keepdim=True) - same_count
 
+        # Local chemical concentrations (transpose for correct indexing)
+        local_chemicals = self.chemicals[:, :, :].permute(1, 2, 0)  # [H, W, NUM_CHEMICALS]
+
         inputs = torch.cat([
             neighbor_energy,                                    # 8: neighbor energy levels
             same_count / 8.0,                                   # 1: same species count
             diff_count / 8.0,                                   # 1: different species count
             energy_norm.unsqueeze(-1),                          # 1: own energy
             (neighbor_alive.sum(dim=-1) / 8.0).unsqueeze(-1),   # 1: total neighbor count
-            torch.zeros((self.size, self.size, 8), device=DEVICE)  # 8: padding
+            torch.zeros((self.size, self.size, 8), device=DEVICE),  # 8: padding
+            local_chemicals * CHEMICAL_INPUT_WEIGHT,            # NUM_CHEMICALS: local chemical signals
         ], dim=-1)
         return inputs
 
@@ -557,9 +588,69 @@ class GPULifeGame:
         result = SPECIES_TENSORS['prey_matrix'][flat_pred, flat_prey]
         return result.view(predator_species.shape)
 
+    def _diffuse_chemicals(self):
+        """Diffuse chemicals across the grid using convolution."""
+        # Create diffusion kernel (3x3 average with center weight)
+        kernel = torch.tensor([[
+            [0.05, 0.1, 0.05],
+            [0.1,  0.4, 0.1],
+            [0.05, 0.1, 0.05]
+        ]], dtype=torch.float32, device=DEVICE).unsqueeze(0)  # [1, 1, 3, 3]
+
+        for chem_id in range(NUM_CHEMICALS):
+            # Pad with circular boundary (toroidal world)
+            chem_field = self.chemicals[chem_id:chem_id+1].unsqueeze(0)  # [1, 1, H, W]
+            padded = F.pad(chem_field, (1, 1, 1, 1), mode='circular')
+
+            # Convolve for diffusion
+            diffused = F.conv2d(padded, kernel).squeeze()
+
+            # Mix old and new based on diffusion rate
+            self.chemicals[chem_id] = (
+                (1 - CHEMICAL_DIFFUSION) * self.chemicals[chem_id] +
+                CHEMICAL_DIFFUSION * diffused
+            )
+
+        # Chemical decay
+        self.chemicals *= (1 - CHEMICAL_DECAY)
+
+    def _secrete_chemicals(self):
+        """Cells secrete chemicals based on their species' chemical affinity."""
+        if not self.alive.any():
+            return
+
+        # For each alive cell, add its chemical signature
+        alive_mask = self.alive.cpu().numpy()
+        species_mask = self.species.cpu().numpy()
+
+        for chem_id in range(NUM_CHEMICALS):
+            secretion_map = torch.zeros((self.size, self.size), dtype=torch.float32, device=DEVICE)
+
+            for sp_id in range(len(SPECIES_CONFIG)):
+                if SPECIES_CONFIG[sp_id]['extinct']:
+                    continue
+
+                # Get species-specific secretion for this chemical
+                affinity = SPECIES_CONFIG[sp_id]['chemical_affinity'][chem_id]
+                sp_cells = alive_mask & (species_mask == sp_id)
+
+                if sp_cells.any():
+                    # Positive affinity = secretion, negative = absorption
+                    if affinity > 0:
+                        secretion_map[torch.from_numpy(sp_cells).to(DEVICE)] += CHEMICAL_SECRETION * affinity
+
+            self.chemicals[chem_id] += secretion_map
+
+        # Clamp to prevent overflow
+        self.chemicals.clamp_(0, 10.0)
+
     def step(self):
         """Execute one simulation step (CUDA optimized)."""
         self.is_newborn.fill_(False)
+
+        # Chemical diffusion and secretion
+        self._diffuse_chemicals()
+        self._secrete_chemicals()
 
         # Metabolism (vectorized lookup)
         metabolism_map = self._get_species_param_fast(SPECIES_TENSORS['metabolism'])
@@ -705,7 +796,21 @@ class GPULifeGame:
 
             is_valid_prey = self._is_valid_prey_fast(my_species, neighbor_species)
             can_attack = predator_eat & neighbor_alive & is_valid_prey
-            attack_success = rand_attack < 0.5
+
+            # Dynamic combat success based on chemical "strength"
+            # Cells with stronger local chemical fields have higher attack/defense
+            predator_strength = self.chemicals.sum(dim=0)  # [H, W] - sum of all chemicals
+            prey_strength = predator_strength[neighbor_r, neighbor_c]
+            attacker_strength = predator_strength
+
+            # Success probability: sigmoid((attack - defense) / 2) scaled to 0.1-0.9 range
+            # This ensures: stronger attackers win more, but never guaranteed
+            strength_diff = attacker_strength - prey_strength
+            success_prob = torch.sigmoid(strength_diff / 2.0) * 0.8 + 0.1  # Range: 0.1 to 0.9
+            success_prob = torch.clamp(success_prob, 0.1, 0.9)
+
+            # Apply success probability
+            attack_success = rand_attack < success_prob
             can_eat = can_attack & attack_success
             escaped = can_attack & ~attack_success
 
@@ -1178,6 +1283,14 @@ def print_system_info():
     print(f"  Offspring energy: {SPECIES_OFFSPRING_ENERGY}")
     print(f"  Starvation threshold: {SPECIES_STARVATION}")
     print(f"  Hidden layer size: {SPECIES_HIDDEN_SIZE}")
+    print(f"\n[Chemical Signaling System]")
+    print(f"  Number of chemicals: {NUM_CHEMICALS}")
+    print(f"  Diffusion rate: {CHEMICAL_DIFFUSION}")
+    print(f"  Decay rate: {CHEMICAL_DECAY}")
+    print(f"  Secretion rate: {CHEMICAL_SECRETION}")
+    print(f"  Each species has unique chemical affinity (evolvable)")
+    print(f"  Combat success: 10%-90% based on local chemical strength")
+    print(f"  Stronger chemical field = better attack/defense")
     print(f"\n[Hybrid Evolution + RL]")
     print(f"  Evolution: Inherit weights on reproduction (mutation rate {MUTATION_RATE})")
     print(f"  RL: Fine-tune weights within generation (learning rate {RL_LEARNING_RATE})")

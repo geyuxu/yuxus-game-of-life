@@ -1,3 +1,8 @@
 numpy
 matplotlib
 scipy
+torch
+dash
+dash-bootstrap-components
+plotly
+pygame

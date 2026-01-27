@@ -1,11 +1,11 @@
 """
-Digital Primordial Soup - A GPU-accelerated Artificial Life Simulation
+Yuxu's Game of Life - A GPU-accelerated Genome-Based Evolution Simulation
 
-This simulation implements a neural network-driven ecosystem where multiple species
-compete for survival through predation, reproduction, and evolution. Key features:
-- Neuroevolution: Neural network weights are inherited and mutated during reproduction
-- Reinforcement Learning: Weights are fine-tuned within each generation based on rewards
-- Dynamic Speciation: Dominant species split into new species to maintain diversity
+A neuroevolution ecosystem where organisms compete, reproduce, and evolve through:
+- Genome-Based Identity: 12-dimensional genome determines organism identity and compatibility
+- Neuroevolution: Neural network weights inherited and mutated during reproduction
+- Reinforcement Learning: Continuous learning through policy gradient updates
+- Lineage Tracking: Validates training effectiveness by tracking trained vs random lineages
 - GPU Acceleration: All computations run on GPU (CUDA/MPS) when available
 """
 
@@ -19,6 +19,9 @@ import argparse
 from scipy import ndimage
 import threading
 import queue
+
+# Import configuration
+from config import *
 
 # =============================================================================
 # COMMAND LINE ARGUMENTS
@@ -42,98 +45,8 @@ else:
 print(f"Using device: {DEVICE}")
 
 # =============================================================================
-# SIMULATION PARAMETERS
+# NOTE: All simulation parameters are now imported from config.py
 # =============================================================================
-# Grid and energy
-GRID_SIZE = 100 #ARGS.grid
-INITIAL_ENERGY = 30.0
-MAX_ENERGY = 100.0
-MOVE_COST = 0.2
-CROWDING_THRESHOLD = 4
-CROWDING_PENALTY = 0.5
-
-# Species configuration
-INITIAL_NUM_SPECIES = 3
-MAX_SPECIES = 500
-MAX_ACTIVE_SPECIES = 50  # Maximum number of active (non-extinct) species to prevent performance issues
-SPECIES_METABOLISM = 0.1
-SPECIES_REPRO_THRESHOLD = 20
-SPECIES_REPRO_COST = 8
-SPECIES_OFFSPRING_ENERGY = 25
-SPECIES_STARVATION = 100
-SPECIES_HIDDEN_SIZE = 8
-HIDDEN_SIZE_INCREMENT = 2  # Neurons added on speciation
-MAX_HIDDEN_SIZE = 240       # Maximum hidden layer size
-MIN_HIDDEN_SIZE = 4         # Minimum hidden layer size
-
-# Random mutation
-MUTATION_INTERVAL = 100     # Check for random mutation every N generations (increased to reduce split frequency)
-RANDOM_MUTATION_CHANCE = 0.05  # Probability per species per check (reduced to slow down speciation)
-
-# Species recycling
-EXTINCT_RECYCLE_DELAY = 50  # Generations before extinct species slot can be reused
-
-# Blob-based speciation
-BLOB_SEPARATION_DELAY = 0   # Generations of separation before blob becomes new species (0 = immediate)
-BLOB_CHECK_INTERVAL = 200   # Check for blob separation every N generations (increased to reduce overhead)
-
-# Performance tuning
-HISTORY_WINDOW = 1000       # Keep only last N generations in history (0 = unlimited)
-RENDER_INTERVAL = 1         # Render every N frames (increase for faster simulation)
-CHART_UPDATE_INTERVAL = 5   # Update charts every N frames (reduces matplotlib overhead)
-VERBOSE_SPECIATION = False  # Print detailed logs for each speciation event (can slow down performance)
-
-# Combat
-ATTACK_BONUS = 1.2  # Energy multiplier when eating prey
-
-# Chemical signaling (for cell differentiation)
-NUM_CHEMICALS = 4           # Number of chemical types
-CHEMICAL_DIFFUSION = 0.3    # Diffusion rate (0-1)
-CHEMICAL_DECAY = 0.05       # Decay rate per step
-CHEMICAL_SECRETION = 0.1    # Amount secreted per step
-CHEMICAL_INPUT_WEIGHT = 0.2 # How much chemicals affect NN input
-
-# Evolution
-MUTATION_RATE = 0.1
-DOMINANCE_THRESHOLD = 0.75  # Species split when >75% of population
-SPLIT_MUTATION_RATE = 0.3   # Higher mutation during speciation
-
-# Genome-based visualization (Scheme C: Hybrid Genome)
-GENOME_BASED_COLOR = True   # Enable genome-to-color mapping (similar genomes = similar colors)
-GENOME_COLOR_UPDATE_INTERVAL = 200  # Update species colors every N generations (increased to reduce overhead)
-
-# Reinforcement Learning
-RL_LEARNING_RATE = 0.01
-REWARD_EAT_PREY = 2.0
-REWARD_SURVIVE_ATTACK = 1.0
-REWARD_REPRODUCE = 1.5
-
-# Neural Network Persistence
-SAVE_DIR = os.path.dirname(os.path.abspath(__file__))
-SAVE_FILE = os.path.join(SAVE_DIR, "best_brain.pt")
-SAVE_INTERVAL = 50
-AUTO_SAVE_ENABLED = False  # Auto-save disabled by default, use manual save instead (press 'S' in pygame)
-ELITE_RATIO = 0.2
-
-# Neural Network Architecture
-INPUT_SIZE = 20 + NUM_CHEMICALS  # Original 20 + chemical concentrations
-NUM_ACTIONS = 7
-ACTION_STAY = 0
-ACTION_UP = 1
-ACTION_DOWN = 2
-ACTION_LEFT = 3
-ACTION_RIGHT = 4
-ACTION_EAT = 5
-ACTION_REPRODUCE = 6
-
-# =============================================================================
-# GENOME-BASED IDENTITY (No Species IDs)
-# =============================================================================
-# All cells share the same base parameters
-# Individual identity comes from genome (12-dim fingerprint)
-
-# Genome-based mate finding
-MATE_GENOME_THRESHOLD = 0.5  # Max genome distance for compatible mates (lower = more selective)
 
 
 # =============================================================================
@@ -340,6 +253,10 @@ class GPULifeGame:
         self.size = size
         self.generation = 0
 
+        # Time-based auto-save tracking
+        import time
+        self.last_save_time = time.time()
+
         # State tensors
         self.alive = torch.zeros((size, size), dtype=torch.bool, device=DEVICE)
         self.energy = torch.zeros((size, size), dtype=torch.float32, device=DEVICE)
@@ -362,6 +279,10 @@ class GPULifeGame:
         self.best_fitness = 0
         self.best_w1 = None
         self.best_w2 = None
+
+        # Validation tracking: mark cells with trained weights vs random
+        # Trained generation tracking: -1=random, 0=direct inheritance, 1,2,3...=generation from trained
+        self.trained_generation = torch.full((size, size), -1, dtype=torch.int32, device=DEVICE)
         self.best_hidden_size = SPECIES_HIDDEN_SIZE
 
         # Neural network weights (one per cell)
@@ -379,6 +300,17 @@ class GPULifeGame:
         self.crowding_kernel = torch.ones((1, 1, 3, 3), device=DEVICE)
         self.crowding_kernel[0, 0, 1, 1] = 0
         self.neuron_idx = torch.arange(MAX_HIDDEN_SIZE, device=DEVICE).view(1, 1, -1)
+
+        # Pre-allocated buffers for _fill_enclosed_spaces() to reduce memory allocation overhead
+        self._buffer_alive_neighbor_count = torch.zeros((size, size), dtype=torch.int32, device=DEVICE)
+        self._buffer_reference_genome = torch.zeros((size, size, 12), dtype=torch.float32, device=DEVICE)
+        self._buffer_reference_found = torch.zeros((size, size), dtype=torch.bool, device=DEVICE)
+        self._buffer_similar_neighbor_count = torch.zeros((size, size), dtype=torch.int32, device=DEVICE)
+        self._buffer_neighbor_genomes_sum = torch.zeros((size, size, 12), dtype=torch.float32, device=DEVICE)
+        self._buffer_neighbor_w1_sum = torch.zeros((size, size, INPUT_SIZE, MAX_HIDDEN_SIZE), dtype=torch.float32, device=DEVICE)
+        self._buffer_neighbor_w2_sum = torch.zeros((size, size, MAX_HIDDEN_SIZE, NUM_ACTIONS), dtype=torch.float32, device=DEVICE)
+        self._buffer_neighbor_trained_gen_sum = torch.zeros((size, size), dtype=torch.int32, device=DEVICE)
+        self._buffer_neighbor_trained_gen_count = torch.zeros((size, size), dtype=torch.int32, device=DEVICE)
 
         # Load saved weights if available
         self.saved_w1, self.saved_w2, self.saved_hidden_size = self._load_saved_weights()
@@ -569,7 +501,12 @@ class GPULifeGame:
 
                 # The rest of hidden neurons (copy_hidden:MAX_HIDDEN_SIZE) remain random
                 # This creates diversity: each cell has 50% learned + 50% random
+
+                # Mark these cells as generation 0 (direct inheritance from trained weights)
+                self.trained_generation[elite_rows, elite_cols] = 0
+
                 print(f"{num_elite} cells inherited saved weights (50% saved + 50% random for diversity)")
+                print(f"Generational tracking enabled: Gen0(trained) vs descendants vs random")
 
         # Update genome neural fingerprints based on initialized weights
         for i in range(num_cells):
@@ -577,6 +514,16 @@ class GPULifeGame:
             genome_np = self.compute_genome(r, c)
             if genome_np is not None:
                 self.genome[r, c] = torch.from_numpy(genome_np).float().to(DEVICE)
+
+                # Add strong random variation to neural fingerprint for diversity
+                # This prevents all cells from having similar genomes even with 50% same weights
+                diversity_boost = torch.randn(8, device=DEVICE) * 1.5
+                self.genome[r, c, 0:8] += diversity_boost
+
+                # Also add variation to chemical affinity based on position
+                pos_seed = (r * self.size + c) * 0.01
+                chem_variation = torch.randn(NUM_CHEMICALS, device=DEVICE) * 1.0 + pos_seed
+                self.genome[r, c, 8:12] += chem_variation
 
     # -------------------------------------------------------------------------
     # Neural Network
@@ -733,6 +680,18 @@ class GPULifeGame:
         # Execute actions
         self._parallel_actions(actions)
 
+        # Fill enclosed spaces with new cells (only every 10 steps to keep system dynamic)
+        if self.generation % 10 == 0:
+            self._fill_enclosed_spaces()
+
+        # Tissue fission: split large enclosed tissues (every 50 steps)
+        if self.generation % 50 == 0:
+            self._tissue_fission()
+
+        # Dominance check: force mutation on dominant species (every N generations)
+        if self.generation > 0 and self.generation % DOMINANCE_CHECK_INTERVAL == 0:
+            self._check_dominance_and_mutate()
+
         # Update lifetime
         self.lifetime = torch.where(self.alive, self.lifetime + 1, self.lifetime)
 
@@ -747,10 +706,20 @@ class GPULifeGame:
         # RL update
         self._apply_rl_update()
 
-        # Save best network periodically (only if auto-save enabled)
+        # Save best network periodically (time-based auto-save)
         self._update_best_network()
-        if AUTO_SAVE_ENABLED and self.generation > 0 and self.generation % SAVE_INTERVAL == 0:
-            self._save_best_weights()
+        if AUTO_SAVE_ENABLED and self.generation > 0:
+            import time
+            current_time = time.time()
+            elapsed = current_time - self.last_save_time
+            if elapsed >= SAVE_INTERVAL_SECONDS:
+                self._save_best_weights()
+                self.last_save_time = current_time
+                print(f"\n[AUTO-SAVE] Generation {self.generation}, Population {self.alive.sum().item()}")
+
+        # Print validation report every 200 generations
+        if self.generation > 0 and self.generation % 200 == 0:
+            self.print_validation_report()
 
         self.generation += 1
 
@@ -890,24 +859,26 @@ class GPULifeGame:
             target_empty = ~self.alive[target_r, target_c]
 
             # Check if target position is "enclosed" by similar genomes (safer for offspring)
-            # Count how many of the 8 neighbors around target are alive with similar genome
+            # Count how many of the 8 neighbors around target are alive with similar genome to parent
             target_enclosure = torch.zeros((self.size, self.size), dtype=torch.float32, device=DEVICE)
+
+            # Get parent genomes (cells attempting to reproduce at self.rows, self.cols)
+            parent_genomes = self.genome[self.rows, self.cols]  # [H, W, 12]
+
             for check_dr, check_dc in dirs:
                 check_r = (target_r + check_dr) % self.size
                 check_c = (target_c + check_dc) % self.size
                 neighbor_alive = self.alive[check_r, check_c]
 
-                # Only check genome similarity where neighbors are alive
-                if neighbor_alive.any():
-                    # Get genome of the target's neighbors
-                    neighbor_genome = self.genome[check_r, check_c]  # [H, W, 12]
-                    parent_genome = self.genome  # [H, W, 12]
+                # Get genome of the target's neighbors
+                neighbor_genome = self.genome[check_r, check_c]  # [H, W, 12]
 
-                    # Calculate genome distance
-                    genome_dist = torch.norm(neighbor_genome - parent_genome, dim=-1)  # [H, W]
-                    is_similar = (genome_dist < MATE_GENOME_THRESHOLD).float()
+                # Calculate genome distance between neighbor and parent
+                genome_dist = torch.norm(neighbor_genome - parent_genomes, dim=-1)  # [H, W]
+                is_similar = (genome_dist < MATE_GENOME_THRESHOLD).float()
 
-                    target_enclosure += neighbor_alive.float() * is_similar
+                # Add to enclosure count where neighbor is alive and similar
+                target_enclosure += neighbor_alive.float() * is_similar
 
             # Enclosed spaces (≥6 similar neighbors) get reproduction bonus
             # This encourages forming protective structures
@@ -1012,6 +983,25 @@ class GPULifeGame:
             self.reward[child_r, child_c] = 0
             self.lifetime[child_r, child_c] = 0
             self.repro_count[child_r, child_c] = 0
+
+            # Inherit trained generation from parents
+            parent1_gen = self.trained_generation[parent1_r, parent1_c]
+            parent2_gen = self.trained_generation[mate_r, mate_c]
+
+            # If either parent has trained ancestry, child is next generation
+            # Use the closer ancestor (smaller generation number)
+            has_trained_parent = (parent1_gen >= 0) | (parent2_gen >= 0)
+            if has_trained_parent.any():
+                # Filter out -1 values, take minimum of valid generations, then add 1
+                valid_gens = torch.stack([parent1_gen, parent2_gen], dim=0)
+                valid_gens = torch.where(valid_gens >= 0, valid_gens, torch.tensor(999, device=DEVICE))
+                min_gen = valid_gens.min(dim=0)[0]
+                child_gen = torch.where(min_gen < 999, min_gen + 1, torch.tensor(-1, dtype=torch.int32, device=DEVICE))
+                self.trained_generation[child_r, child_c] = child_gen
+            else:
+                # Both parents are random (-1), child is also random
+                self.trained_generation[child_r, child_c] = -1
+
             is_reproduce = is_reproduce & ~winner
 
     def _apply_rl_update(self):
@@ -1059,6 +1049,518 @@ class GPULifeGame:
         self.w1[rows, cols] += delta_w1
 
         self.reward.fill_(0)
+
+    def _fill_enclosed_spaces(self):
+        """
+        Fill enclosed spaces with new cells of the surrounding species.
+
+        If an empty cell has at least 6 alive neighbors with similar genomes,
+        create a new cell that inherits from the similar neighbors.
+        """
+        # Find all empty cells
+        empty_mask = ~self.alive
+
+        if not empty_mask.any():
+            return
+
+        # For each empty cell, check all 8 neighbors
+        dirs = [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1), (-1, -1), (1, -1), (-1, 1)]
+
+        # Use pre-allocated buffers and zero them out
+        self._buffer_alive_neighbor_count.zero_()
+        self._buffer_reference_genome.zero_()
+        self._buffer_reference_found.zero_()
+
+        # Alias for readability
+        alive_neighbor_count = self._buffer_alive_neighbor_count
+        reference_genome = self._buffer_reference_genome
+        reference_found = self._buffer_reference_found
+
+        for dr, dc in dirs:
+            neighbor_r = (self.rows + dr) % self.size
+            neighbor_c = (self.cols + dc) % self.size
+            neighbor_alive = self.alive[neighbor_r, neighbor_c]
+            neighbor_genome = self.genome[neighbor_r, neighbor_c]
+
+            # Count alive neighbors
+            alive_neighbor_count += neighbor_alive.int()
+
+            # Set first alive neighbor as reference genome
+            need_reference = ~reference_found & neighbor_alive
+            reference_genome = torch.where(
+                need_reference.unsqueeze(-1),
+                neighbor_genome,
+                reference_genome
+            )
+            reference_found |= neighbor_alive
+
+        # Second pass: use pre-allocated buffers and zero them out
+        self._buffer_similar_neighbor_count.zero_()
+        self._buffer_neighbor_genomes_sum.zero_()
+        self._buffer_neighbor_w1_sum.zero_()
+        self._buffer_neighbor_w2_sum.zero_()
+        self._buffer_neighbor_trained_gen_sum.zero_()
+        self._buffer_neighbor_trained_gen_count.zero_()
+
+        # Alias for readability
+        similar_neighbor_count = self._buffer_similar_neighbor_count
+        neighbor_genomes_sum = self._buffer_neighbor_genomes_sum
+        neighbor_w1_sum = self._buffer_neighbor_w1_sum
+        neighbor_w2_sum = self._buffer_neighbor_w2_sum
+        neighbor_trained_gen_sum = self._buffer_neighbor_trained_gen_sum
+        neighbor_trained_gen_count = self._buffer_neighbor_trained_gen_count
+
+        for dr, dc in dirs:
+            neighbor_r = (self.rows + dr) % self.size
+            neighbor_c = (self.cols + dc) % self.size
+            neighbor_alive = self.alive[neighbor_r, neighbor_c]
+            neighbor_genome = self.genome[neighbor_r, neighbor_c]
+
+            # Check genome similarity to reference (only where neighbor is alive)
+            genome_dist = torch.norm(neighbor_genome - reference_genome, dim=-1)
+            is_similar = neighbor_alive & (genome_dist < MATE_GENOME_THRESHOLD)
+
+            # Count similar neighbors
+            similar_neighbor_count += is_similar.int()
+
+            # Accumulate data from similar neighbors
+            is_similar_3d = is_similar.unsqueeze(-1)
+            neighbor_genomes_sum += torch.where(is_similar_3d, neighbor_genome, torch.zeros_like(neighbor_genome))
+
+            is_similar_w1 = is_similar.unsqueeze(-1).unsqueeze(-1)
+            neighbor_w1_sum += torch.where(is_similar_w1, self.w1[neighbor_r, neighbor_c], torch.zeros_like(self.w1[neighbor_r, neighbor_c]))
+
+            is_similar_w2 = is_similar.unsqueeze(-1).unsqueeze(-1)
+            neighbor_w2_sum += torch.where(is_similar_w2, self.w2[neighbor_r, neighbor_c], torch.zeros_like(self.w2[neighbor_r, neighbor_c]))
+
+            # Accumulate trained_generation from similar neighbors (only if >= 0)
+            neighbor_gen = self.trained_generation[neighbor_r, neighbor_c]
+            has_trained_gen = is_similar & (neighbor_gen >= 0)
+            neighbor_trained_gen_sum += torch.where(has_trained_gen, neighbor_gen, torch.zeros_like(neighbor_gen))
+            neighbor_trained_gen_count += has_trained_gen.int()
+
+        # Fill cells that are COMPLETELY enclosed (all 8 neighbors alive and similar)
+        # This prevents over-filling and keeps the system dynamic
+        fill_mask = empty_mask & (similar_neighbor_count >= 8)
+
+        if not fill_mask.any():
+            return
+
+        # Create new cells at enclosed positions
+        fill_positions = fill_mask.nonzero(as_tuple=False)
+
+        for pos in fill_positions:
+            r, c = pos[0].item(), pos[1].item()
+            count = similar_neighbor_count[r, c].item()
+
+            if count == 0:
+                continue
+
+            # Average genome and weights from similar neighbors
+            avg_genome = neighbor_genomes_sum[r, c] / count
+            avg_w1 = neighbor_w1_sum[r, c] / count
+            avg_w2 = neighbor_w2_sum[r, c] / count
+
+            # Calculate trained_generation: if neighbors have trained ancestry, next generation
+            trained_count = neighbor_trained_gen_count[r, c].item()
+            if trained_count > 0:
+                avg_gen = neighbor_trained_gen_sum[r, c].item() / trained_count
+                child_gen = int(avg_gen) + 1
+            else:
+                child_gen = -1  # No trained ancestry
+
+            # Add small mutation
+            mutation_noise_genome = torch.randn_like(avg_genome) * MUTATION_RATE * 0.5
+            mutation_noise_w1 = torch.randn_like(avg_w1) * MUTATION_RATE * 0.5
+            mutation_noise_w2 = torch.randn_like(avg_w2) * MUTATION_RATE * 0.5
+
+            # Create the new cell
+            self.alive[r, c] = True
+            self.energy[r, c] = SPECIES_OFFSPRING_ENERGY
+            self.genome[r, c] = avg_genome + mutation_noise_genome
+            self.w1[r, c] = avg_w1 + mutation_noise_w1
+            self.w2[r, c] = avg_w2 + mutation_noise_w2
+            self.is_newborn[r, c] = True
+            self.lifetime[r, c] = 0
+            self.repro_count[r, c] = 0
+            self.hunger[r, c] = 0
+            self.trained_generation[r, c] = child_gen
+
+    def _tissue_fission(self):
+        """
+        Split enclosed tissue into two organisms with genetic recombination.
+
+        Each organism retains half neurons (interleaved) and fills the other half randomly.
+        This simulates asexual reproduction at the organism level.
+        """
+        alive = self.alive.cpu().numpy()
+        genome = self.genome.cpu().numpy()
+
+        if not alive.any():
+            return
+
+        # Find connected tissue regions
+        visited = np.zeros_like(alive, dtype=bool)
+        tissues = []
+
+        for y in range(self.size):
+            for x in range(self.size):
+                if not alive[y, x] or visited[y, x]:
+                    continue
+
+                # BFS to find connected tissue
+                tissue_cells = []
+                queue = [(y, x)]
+                visited[y, x] = True
+                ref_genome = genome[y, x]
+
+                while queue:
+                    cy, cx = queue.pop(0)
+                    tissue_cells.append((cy, cx))
+
+                    # Check 4 neighbors
+                    for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        ny = (cy + dy) % self.size
+                        nx = (cx + dx) % self.size
+
+                        if not visited[ny, nx] and alive[ny, nx]:
+                            neighbor_genome = genome[ny, nx]
+                            dist = np.linalg.norm(neighbor_genome - ref_genome)
+                            if dist < MATE_GENOME_THRESHOLD:
+                                visited[ny, nx] = True
+                                queue.append((ny, nx))
+
+                # Only consider tissues large enough to split (>= 100 cells)
+                if len(tissue_cells) >= 100:
+                    tissues.append(tissue_cells)
+
+        if not tissues:
+            return
+
+        # Process each tissue for potential fission
+        for tissue_cells in tissues:
+            # 10% chance of fission per generation
+            if np.random.random() > 0.1:
+                continue
+
+            # Find tissue center
+            coords = np.array(tissue_cells)
+            center_y = coords[:, 0].mean()
+            center_x = coords[:, 1].mean()
+
+            # Divide tissue into two halves based on distance from center
+            # Use a random division axis
+            angle = np.random.random() * np.pi
+            division_vec = np.array([np.cos(angle), np.sin(angle)])
+
+            half_a = []
+            half_b = []
+
+            for y, x in tissue_cells:
+                # Project cell position onto division vector
+                pos_vec = np.array([y - center_y, x - center_x])
+                projection = np.dot(pos_vec, division_vec)
+
+                if projection >= 0:
+                    half_a.append((y, x))
+                else:
+                    half_b.append((y, x))
+
+            # Skip if division is too unbalanced
+            if len(half_a) < 20 or len(half_b) < 20:
+                continue
+
+            # Apply genetic recombination to each half
+            self._apply_fission_mutation(half_a)
+            self._apply_fission_mutation(half_b)
+
+    def _apply_random_mutation(self, cells, random_ratio=0.7, energy_cost=False):
+        """
+        Apply random mutation to a group of cells.
+
+        Args:
+            cells: List of (y, x) cell positions
+            random_ratio: Ratio of neurons to randomize (0.3 to 0.7)
+                         0.3 = 30% randomize, 70% keep (mild)
+                         0.5 = 50% randomize, 50% keep (moderate)
+                         0.7 = 70% randomize, 30% keep (strong, default)
+            energy_cost: If True, reduce energy by 30% (for fission cost)
+        """
+        # Calculate how many neurons to keep (inverse of random_ratio)
+        keep_ratio = 1.0 - random_ratio
+        neuron_mask = torch.zeros(MAX_HIDDEN_SIZE, dtype=torch.bool, device=DEVICE)
+        num_keep = int(MAX_HIDDEN_SIZE * keep_ratio)
+        keep_indices = torch.randperm(MAX_HIDDEN_SIZE, device=DEVICE)[:num_keep]
+        neuron_mask[keep_indices] = True
+
+        for y, x in cells:
+            # Get current weights
+            w1_current = self.w1[y, x].clone()
+            w2_current = self.w2[y, x].clone()
+            genome_current = self.genome[y, x].clone()
+
+            # Create new weights: randomly keep some neurons, randomize others
+            w1_new = torch.randn_like(w1_current) * 0.5
+            w2_new = torch.randn_like(w2_current) * 0.5
+
+            # Apply mask: keep selected neurons, randomize others
+            # w1: [INPUT_SIZE, MAX_HIDDEN_SIZE]
+            w1_new[:, neuron_mask] = w1_current[:, neuron_mask]
+
+            # w2: [MAX_HIDDEN_SIZE, NUM_ACTIONS]
+            w2_new[neuron_mask, :] = w2_current[neuron_mask, :]
+
+            # Update weights
+            self.w1[y, x] = w1_new
+            self.w2[y, x] = w2_new
+
+            # Update genome with mutation
+            genome_mutation = torch.randn(12, device=DEVICE) * MUTATION_RATE
+            self.genome[y, x] = genome_current + genome_mutation
+
+            # Optional energy cost (for fission)
+            if energy_cost:
+                self.energy[y, x] = max(5.0, self.energy[y, x].item() * 0.7)
+
+    def _apply_fission_mutation(self, cells):
+        """
+        Apply genetic recombination for tissue fission.
+        Uses 50% randomization (moderate) with energy cost.
+        """
+        self._apply_random_mutation(cells, random_ratio=0.5, energy_cost=True)
+
+    def _check_dominance_and_mutate(self):
+        """
+        Check for dominant species and force mutation to maintain diversity.
+
+        If a genome cluster exceeds DOMINANCE_THRESHOLD (30%) of population,
+        apply interleaved mutation: keep 50% neurons, randomize other 50%.
+        """
+        alive = self.alive.cpu().numpy()
+        genome = self.genome.cpu().numpy()
+
+        if not alive.any():
+            return
+
+        total_population = alive.sum()
+        alive_genomes = genome[alive]
+        N = len(alive_genomes)
+
+        if N < 100:  # Skip if population too small
+            return
+
+        # Sample for clustering (for performance)
+        max_sample = 500
+        if N > max_sample:
+            sample_indices = np.random.choice(N, max_sample, replace=False)
+            sample_genomes = alive_genomes[sample_indices]
+            N_sample = max_sample
+        else:
+            sample_genomes = alive_genomes
+            N_sample = N
+
+        # Build adjacency matrix
+        adjacency = np.zeros((N_sample, N_sample), dtype=bool)
+        for i in range(N_sample):
+            for j in range(i+1, N_sample):
+                dist = np.linalg.norm(sample_genomes[i] - sample_genomes[j])
+                if dist < MATE_GENOME_THRESHOLD:
+                    adjacency[i, j] = True
+                    adjacency[j, i] = True
+
+        # Find cluster centers using BFS
+        cluster_centers = []
+        visited = np.zeros(N_sample, dtype=bool)
+
+        for i in range(N_sample):
+            if visited[i]:
+                continue
+
+            cluster_indices = []
+            queue = [i]
+            visited[i] = True
+
+            while queue:
+                current = queue.pop(0)
+                cluster_indices.append(current)
+
+                neighbors = np.where(adjacency[current] & ~visited)[0]
+                for neighbor in neighbors:
+                    visited[neighbor] = True
+                    queue.append(neighbor)
+
+            if cluster_indices:
+                cluster_genomes = sample_genomes[cluster_indices]
+                center = cluster_genomes.mean(axis=0)
+                cluster_centers.append(center)
+
+        if len(cluster_centers) == 0:
+            return
+
+        # Assign all alive cells to nearest cluster and count
+        cluster_centers_array = np.array(cluster_centers)
+        cluster_counts = [0] * len(cluster_centers)
+        cluster_cell_positions = [[] for _ in range(len(cluster_centers))]
+
+        positions = np.argwhere(alive)
+        for y, x in positions:
+            cell_genome = genome[y, x]
+            distances = np.linalg.norm(cluster_centers_array - cell_genome, axis=1)
+            nearest_cluster = np.argmin(distances)
+            cluster_counts[nearest_cluster] += 1
+            cluster_cell_positions[nearest_cluster].append((y, x))
+
+        # Check for dominant clusters and apply mutation
+        for cluster_id, count in enumerate(cluster_counts):
+            ratio = count / total_population
+
+            if ratio > DOMINANCE_THRESHOLD:
+                print(f"\n[DOMINANCE MUTATION] Cluster {cluster_id} = {ratio*100:.1f}% (>{DOMINANCE_THRESHOLD*100:.0f}%)")
+                print(f"  Applying interleaved mutation to {count} cells...")
+
+                # Apply interleaved mutation to all cells in this cluster
+                cells = cluster_cell_positions[cluster_id]
+                self._apply_interleaved_mutation(cells)
+
+    def _apply_interleaved_mutation(self, cells):
+        """
+        Apply strong mutation for dominance control.
+        Uses 70% randomization (strong) without energy cost.
+        """
+        self._apply_random_mutation(cells, random_ratio=0.7, energy_cost=False)
+
+    def get_validation_stats(self):
+        """
+        Compare performance by trained generation:
+        - Gen0: Direct inheritance from trained weights
+        - Gen1+: Descendants of trained cells
+        - Random: No trained ancestry
+        """
+        # Group by generation
+        gen0_mask = self.alive & (self.trained_generation == 0)
+        gen1_5_mask = self.alive & (self.trained_generation >= 1) & (self.trained_generation <= 5)
+        gen6plus_mask = self.alive & (self.trained_generation > 5)
+        random_mask = self.alive & (self.trained_generation < 0)
+
+        gen0_count = gen0_mask.sum().item()
+        gen1_5_count = gen1_5_mask.sum().item()
+        gen6plus_count = gen6plus_mask.sum().item()
+        random_count = random_mask.sum().item()
+
+        total = gen0_count + gen1_5_count + gen6plus_count + random_count
+        if total == 0:
+            return None
+
+        stats = {
+            'gen0_count': gen0_count,
+            'gen1_5_count': gen1_5_count,
+            'gen6plus_count': gen6plus_count,
+            'random_count': random_count,
+            'trained_total': gen0_count + gen1_5_count + gen6plus_count,
+        }
+
+        # Gen 0 stats
+        if gen0_count > 0:
+            stats['gen0_avg_lifetime'] = self.lifetime[gen0_mask].float().mean().item()
+            stats['gen0_avg_repro'] = self.repro_count[gen0_mask].float().mean().item()
+            stats['gen0_avg_energy'] = self.energy[gen0_mask].float().mean().item()
+        else:
+            stats['gen0_avg_lifetime'] = 0
+            stats['gen0_avg_repro'] = 0
+            stats['gen0_avg_energy'] = 0
+
+        # Gen 1-5 stats
+        if gen1_5_count > 0:
+            stats['gen1_5_avg_lifetime'] = self.lifetime[gen1_5_mask].float().mean().item()
+            stats['gen1_5_avg_repro'] = self.repro_count[gen1_5_mask].float().mean().item()
+            stats['gen1_5_avg_energy'] = self.energy[gen1_5_mask].float().mean().item()
+        else:
+            stats['gen1_5_avg_lifetime'] = 0
+            stats['gen1_5_avg_repro'] = 0
+            stats['gen1_5_avg_energy'] = 0
+
+        # Gen 6+ stats
+        if gen6plus_count > 0:
+            stats['gen6plus_avg_lifetime'] = self.lifetime[gen6plus_mask].float().mean().item()
+            stats['gen6plus_avg_repro'] = self.repro_count[gen6plus_mask].float().mean().item()
+            stats['gen6plus_avg_energy'] = self.energy[gen6plus_mask].float().mean().item()
+        else:
+            stats['gen6plus_avg_lifetime'] = 0
+            stats['gen6plus_avg_repro'] = 0
+            stats['gen6plus_avg_energy'] = 0
+
+        # Random stats
+        if random_count > 0:
+            stats['random_avg_lifetime'] = self.lifetime[random_mask].float().mean().item()
+            stats['random_avg_repro'] = self.repro_count[random_mask].float().mean().item()
+            stats['random_avg_energy'] = self.energy[random_mask].float().mean().item()
+        else:
+            stats['random_avg_lifetime'] = 0
+            stats['random_avg_repro'] = 0
+            stats['random_avg_energy'] = 0
+
+        # Combined trained lineage stats (Gen0 + Gen1-5 + Gen6+)
+        trained_lineage_mask = self.alive & (self.trained_generation >= 0)
+        trained_lineage_count = trained_lineage_mask.sum().item()
+        if trained_lineage_count > 0:
+            stats['trained_lineage_avg_lifetime'] = self.lifetime[trained_lineage_mask].float().mean().item()
+            stats['trained_lineage_avg_repro'] = self.repro_count[trained_lineage_mask].float().mean().item()
+            stats['trained_lineage_avg_energy'] = self.energy[trained_lineage_mask].float().mean().item()
+        else:
+            stats['trained_lineage_avg_lifetime'] = 0
+            stats['trained_lineage_avg_repro'] = 0
+            stats['trained_lineage_avg_energy'] = 0
+
+        return stats
+
+    def print_validation_report(self):
+        """Print generational validation report."""
+        stats = self.get_validation_stats()
+        if stats is None:
+            return
+
+        print("\n" + "="*70)
+        print(f"GENERATIONAL VALIDATION - Generation {self.generation}")
+        print("="*70)
+
+        total = stats['gen0_count'] + stats['gen1_5_count'] + stats['gen6plus_count'] + stats['random_count']
+
+        print(f"\nPopulation by Lineage:")
+        print(f"  Gen 0 (Direct trained):       {stats['gen0_count']:5d} ({stats['gen0_count']/total*100:5.1f}%)")
+        print(f"  Gen 1-5 (Near descendants):   {stats['gen1_5_count']:5d} ({stats['gen1_5_count']/total*100:5.1f}%)")
+        print(f"  Gen 6+ (Far descendants):     {stats['gen6plus_count']:5d} ({stats['gen6plus_count']/total*100:5.1f}%)")
+        print(f"  Random (No trained ancestry): {stats['random_count']:5d} ({stats['random_count']/total*100:5.1f}%)")
+        print(f"  ----------------------------------------")
+        print(f"  Total Trained Lineage:        {stats['trained_total']:5d} ({stats['trained_total']/total*100:5.1f}%)")
+
+        print(f"\n** PRIMARY COMPARISON: Trained Lineage vs Random **")
+        print(f"  Lifetime:     {stats['trained_lineage_avg_lifetime']:6.1f} vs {stats['random_avg_lifetime']:6.1f}", end="")
+        if stats['random_avg_lifetime'] > 0 and stats['trained_lineage_avg_lifetime'] > 0:
+            ratio = stats['trained_lineage_avg_lifetime'] / stats['random_avg_lifetime']
+            print(f"  = {ratio:5.2f}x {'✓ BETTER' if ratio > 1 else '✗ WORSE'}")
+        else:
+            print()
+
+        print(f"  Reproduction: {stats['trained_lineage_avg_repro']:6.2f} vs {stats['random_avg_repro']:6.2f}", end="")
+        if stats['random_avg_repro'] > 0 and stats['trained_lineage_avg_repro'] > 0:
+            ratio = stats['trained_lineage_avg_repro'] / stats['random_avg_repro']
+            print(f"  = {ratio:5.2f}x {'✓ BETTER' if ratio > 1 else '✗ WORSE'}")
+        else:
+            print()
+
+        print(f"  Energy:       {stats['trained_lineage_avg_energy']:6.1f} vs {stats['random_avg_energy']:6.1f}", end="")
+        if stats['random_avg_energy'] > 0 and stats['trained_lineage_avg_energy'] > 0:
+            ratio = stats['trained_lineage_avg_energy'] / stats['random_avg_energy']
+            print(f"  = {ratio:5.2f}x {'✓ BETTER' if ratio > 1 else '✗ WORSE'}")
+        else:
+            print()
+
+        print(f"\nBreakdown by Generation:")
+        print(f"  Lifetime:     Gen0={stats['gen0_avg_lifetime']:5.1f}  Gen1-5={stats['gen1_5_avg_lifetime']:5.1f}  Gen6+={stats['gen6plus_avg_lifetime']:5.1f}")
+        print(f"  Reproduction: Gen0={stats['gen0_avg_repro']:5.2f}  Gen1-5={stats['gen1_5_avg_repro']:5.2f}  Gen6+={stats['gen6plus_avg_repro']:5.2f}")
+        print(f"  Energy:       Gen0={stats['gen0_avg_energy']:5.1f}  Gen1-5={stats['gen1_5_avg_energy']:5.1f}  Gen6+={stats['gen6plus_avg_energy']:5.1f}")
+
+        print("="*70 + "\n")
 
     # -------------------------------------------------------------------------
     def render(self):
@@ -1125,18 +1627,10 @@ def print_system_info():
     print(f"    Successful hunt: +{REWARD_EAT_PREY}")
     print(f"    Escape attack: +{REWARD_SURVIVE_ATTACK}")
     print(f"    Reproduction: +{REWARD_REPRODUCE}")
-    print(f"\n[Dynamic Speciation]")
-    print(f"  Splits when single species exceeds {DOMINANCE_THRESHOLD*100:.0f}%")
-    print(f"  Split mutation rate: {SPLIT_MUTATION_RATE}")
-    print(f"  Initial species: {INITIAL_NUM_SPECIES}, Max slots: {MAX_SPECIES}")
-    print(f"  Species recycling: extinct slots reused after {EXTINCT_RECYCLE_DELAY} generations")
-    print(f"  Hidden neurons: {SPECIES_HIDDEN_SIZE} -> +/-{HIDDEN_SIZE_INCREMENT}/mutation (range {MIN_HIDDEN_SIZE}-{MAX_HIDDEN_SIZE})")
-    print(f"\n[Random Mutation]")
-    print(f"  Check every {MUTATION_INTERVAL} generations")
-    print(f"  {RANDOM_MUTATION_CHANCE*100:.0f}% chance per species per check")
-    print(f"  60% gain neurons, 40% lose neurons")
-    print(f"\n[Geographic Isolation]")
-    print(f"  Blob separation check every {BLOB_CHECK_INTERVAL} generations")
+    print(f"\n[Dominance-Based Mutation]")
+    print(f"  Force mutation when species exceeds {DOMINANCE_THRESHOLD*100:.0f}% of population")
+    print(f"  Check every {DOMINANCE_CHECK_INTERVAL} generations")
+    print(f"  Mutation: Keep 30% neurons (random), randomize 70%")
     if BLOB_SEPARATION_DELAY > 0:
         print(f"  Auto-speciate after {BLOB_SEPARATION_DELAY} generations apart")
     else:

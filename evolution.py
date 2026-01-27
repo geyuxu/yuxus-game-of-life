@@ -888,8 +888,34 @@ class GPULifeGame:
             target_r = (self.rows + dr) % self.size
             target_c = (self.cols + dc) % self.size
             target_empty = ~self.alive[target_r, target_c]
+
+            # Check if target position is "enclosed" by similar genomes (safer for offspring)
+            # Count how many of the 8 neighbors around target are alive with similar genome
+            target_enclosure = torch.zeros((self.size, self.size), dtype=torch.float32, device=DEVICE)
+            for check_dr, check_dc in dirs:
+                check_r = (target_r + check_dr) % self.size
+                check_c = (target_c + check_dc) % self.size
+                neighbor_alive = self.alive[check_r, check_c]
+
+                # Only check genome similarity where neighbors are alive
+                if neighbor_alive.any():
+                    # Get genome of the target's neighbors
+                    neighbor_genome = self.genome[check_r, check_c]  # [H, W, 12]
+                    parent_genome = self.genome  # [H, W, 12]
+
+                    # Calculate genome distance
+                    genome_dist = torch.norm(neighbor_genome - parent_genome, dim=-1)  # [H, W]
+                    is_similar = (genome_dist < MATE_GENOME_THRESHOLD).float()
+
+                    target_enclosure += neighbor_alive.float() * is_similar
+
+            # Enclosed spaces (≥6 similar neighbors) get reproduction bonus
+            # This encourages forming protective structures
+            is_enclosed = target_enclosure >= 6
+            reproduction_priority = torch.where(is_enclosed, 0.7, 0.5)  # Higher chance if enclosed
+
             can_reproduce = is_reproduce & target_empty & (self.energy >= SPECIES_REPRO_THRESHOLD)
-            winner = can_reproduce & (rand_shared > 0.5)
+            winner = can_reproduce & (rand_shared > reproduction_priority)
 
             if not winner.any():
                 continue

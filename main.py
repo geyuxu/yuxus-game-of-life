@@ -168,6 +168,43 @@ class PyGameRenderer:
                 radius = max(1, int(self.cell_size * 0.45))  # Slightly smaller than cell to avoid overlap
                 pygame.draw.circle(self.main_surface, color, (center_x, center_y), radius)
 
+        # Draw organization boundaries (genome-based)
+        # Check 4-connected neighbors and draw boundary lines where genomes differ
+        boundary_color = (80, 80, 80)  # Dark gray boundaries
+        for y in range(self.game.size):
+            for x in range(self.game.size):
+                if not alive[y, x]:
+                    continue
+
+                cell_genome = genome[y, x]
+                sx, sy = self.world_to_screen(x, y)
+
+                # Check right neighbor
+                x_right = (x + 1) % self.game.size
+                if alive[y, x_right]:
+                    neighbor_genome = genome[y, x_right]
+                    genome_dist = np.linalg.norm(cell_genome - neighbor_genome)
+                    if genome_dist >= MATE_GENOME_THRESHOLD:  # Different organization
+                        # Draw vertical boundary line on right edge
+                        line_x = int(sx + self.cell_size)
+                        line_y_start = int(sy)
+                        line_y_end = int(sy + self.cell_size)
+                        pygame.draw.line(self.main_surface, boundary_color,
+                                       (line_x, line_y_start), (line_x, line_y_end), 2)
+
+                # Check bottom neighbor
+                y_bottom = (y + 1) % self.game.size
+                if alive[y_bottom, x]:
+                    neighbor_genome = genome[y_bottom, x]
+                    genome_dist = np.linalg.norm(cell_genome - neighbor_genome)
+                    if genome_dist >= MATE_GENOME_THRESHOLD:  # Different organization
+                        # Draw horizontal boundary line on bottom edge
+                        line_x_start = int(sx)
+                        line_x_end = int(sx + self.cell_size)
+                        line_y = int(sy + self.cell_size)
+                        pygame.draw.line(self.main_surface, boundary_color,
+                                       (line_x_start, line_y), (line_x_end, line_y), 2)
+
         # Chemical overlay
         if self.show_chemical:
             self.render_chemical_overlay()

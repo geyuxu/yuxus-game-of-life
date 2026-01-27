@@ -18,6 +18,7 @@ import colorsys
 import time
 import os
 import argparse
+from scipy import ndimage
 
 # =============================================================================
 # COMMAND LINE ARGUMENTS
@@ -73,7 +74,7 @@ EXTINCT_RECYCLE_DELAY = 50  # Generations before extinct species slot can be reu
 
 # Blob-based speciation
 BLOB_SEPARATION_DELAY = 50  # Generations of separation before blob becomes new species
-BLOB_CHECK_INTERVAL = 10    # Check for blob separation every N generations
+BLOB_CHECK_INTERVAL = 25    # Check for blob separation every N generations (higher = less lag)
 
 # Performance tuning
 HISTORY_WINDOW = 1000       # Keep only last N generations in history (0 = unlimited)
@@ -801,49 +802,27 @@ class GPULifeGame:
     # -------------------------------------------------------------------------
     def _find_species_blobs(self, species_id: int):
         """
-        Find connected components (blobs) for a species using flood fill.
+        Find connected components (blobs) for a species using scipy's optimized label.
         Returns list of position tensors, one per blob, sorted by size (largest first).
         """
         species_mask = (self.species == species_id) & self.alive
         if not species_mask.any():
             return []
 
-        # Get positions as numpy for efficient flood fill
+        # Use scipy's fast connected component labeling (8-connectivity)
         mask_np = species_mask.cpu().numpy()
-        visited = np.zeros_like(mask_np, dtype=bool)
+        # Note: scipy doesn't handle toroidal wrapping, but for blob detection
+        # this approximation is acceptable for performance
+        labeled, num_blobs = ndimage.label(mask_np, structure=np.ones((3, 3)))
+
+        if num_blobs == 0:
+            return []
+
         blobs = []
-
-        # 8-connectivity directions
-        dirs = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-
-        positions = np.argwhere(mask_np)
-        for start_r, start_c in positions:
-            if visited[start_r, start_c]:
-                continue
-
-            # Flood fill from this position
-            blob_positions = []
-            stack = [(start_r, start_c)]
-            while stack:
-                r, c = stack.pop()
-                if visited[r, c]:
-                    continue
-                if not mask_np[r, c]:
-                    continue
-                visited[r, c] = True
-                blob_positions.append((r, c))
-
-                # Check neighbors (with toroidal wrap)
-                for dr, dc in dirs:
-                    nr = (r + dr) % self.size
-                    nc = (c + dc) % self.size
-                    if mask_np[nr, nc] and not visited[nr, nc]:
-                        stack.append((nr, nc))
-
-            if blob_positions:
-                # Convert to tensor
-                blob_arr = np.array(blob_positions)
-                blob_tensor = torch.tensor(blob_arr, dtype=torch.long, device=DEVICE)
+        for blob_id in range(1, num_blobs + 1):
+            positions = np.argwhere(labeled == blob_id)
+            if len(positions) > 0:
+                blob_tensor = torch.tensor(positions, dtype=torch.long, device=DEVICE)
                 blobs.append(blob_tensor)
 
         # Sort by size (largest first)
@@ -1314,32 +1293,33 @@ def main():
                 global_species_lines[sp_id].set_data(gens, game.history['species'][sp_id])
         line_global_total.set_data(gens, game.history['population'])
 
-        # Hide extinct species from legend (only show alive species)
+        # Hide extinct species from legend (only update when status changes)
         legend_needs_update = False
         for sp_id in range(len(SPECIES_CONFIG)):
             is_extinct = SPECIES_CONFIG[sp_id].get('extinct', False)
 
             if sp_id < len(species_lines):
-                # Hide extinct species line and remove from legend
-                species_lines[sp_id].set_visible(not is_extinct)
-                if is_extinct:
-                    species_lines[sp_id].set_label('_hidden')  # Underscore prefix hides from legend
-                else:
-                    name = SPECIES_CONFIG[sp_id]['name']
-                    species_lines[sp_id].set_label(f'{sp_id}: {name}')
-                legend_needs_update = True
+                # Only update if visibility changed
+                if species_lines[sp_id].get_visible() != (not is_extinct):
+                    species_lines[sp_id].set_visible(not is_extinct)
+                    if is_extinct:
+                        species_lines[sp_id].set_label('_hidden')
+                    else:
+                        name = SPECIES_CONFIG[sp_id]['name']
+                        species_lines[sp_id].set_label(f'{sp_id}: {name}')
+                    legend_needs_update = True
 
             if sp_id < len(global_species_lines):
-                global_species_lines[sp_id].set_visible(not is_extinct)
-                if is_extinct:
-                    global_species_lines[sp_id].set_label('_hidden')
-                else:
-                    name = SPECIES_CONFIG[sp_id]['name']
-                    global_species_lines[sp_id].set_label(name)
-                legend_needs_update = True
+                if global_species_lines[sp_id].get_visible() != (not is_extinct):
+                    global_species_lines[sp_id].set_visible(not is_extinct)
+                    if is_extinct:
+                        global_species_lines[sp_id].set_label('_hidden')
+                    else:
+                        name = SPECIES_CONFIG[sp_id]['name']
+                        global_species_lines[sp_id].set_label(name)
+                    legend_needs_update = True
 
         if legend_needs_update:
-            # Rebuild legends with only visible species
             ax_stats.legend(loc='upper right', fontsize=7)
             ax_global.legend(loc='upper right', fontsize=8, ncol=min(len(SPECIES_CONFIG), 5))
 

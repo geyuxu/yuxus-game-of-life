@@ -44,7 +44,7 @@ print(f"Using device: {DEVICE}")
 # SIMULATION PARAMETERS
 # =============================================================================
 # Grid and energy
-GRID_SIZE = ARGS.grid
+GRID_SIZE = 500 #ARGS.grid
 INITIAL_ENERGY = 30.0
 MAX_ENERGY = 100.0
 MOVE_COST = 0.2
@@ -52,8 +52,8 @@ CROWDING_THRESHOLD = 4
 CROWDING_PENALTY = 0.5
 
 # Species configuration
-INITIAL_NUM_SPECIES = 3
-MAX_SPECIES = 10
+INITIAL_NUM_SPECIES = 10
+MAX_SPECIES = 50
 SPECIES_METABOLISM = 0.1
 SPECIES_REPRO_THRESHOLD = 20
 SPECIES_REPRO_COST = 8

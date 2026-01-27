@@ -30,7 +30,7 @@ from collections import deque
 
 # Import simulation
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from main import GPULifeGame, SPECIES_CONFIG, NUM_CHEMICALS
+from main import GPULifeGame, NUM_CHEMICALS, genome_to_color
 
 # =============================================================================
 # CONSTANTS
@@ -137,7 +137,7 @@ class PyGameRenderer:
         # Get data from game
         alive = self.game.alive.cpu().numpy()
         energy = self.game.energy.cpu().numpy()
-        species = self.game.species.cpu().numpy()
+        genome = self.game.genome.cpu().numpy()
 
         # Render cells
         for y in range(self.game.size):
@@ -145,12 +145,9 @@ class PyGameRenderer:
                 if not alive[y, x]:
                     continue
 
-                # Get species color
-                sp_id = species[y, x]
-                if sp_id >= len(SPECIES_CONFIG):
-                    continue
-
-                base_color = SPECIES_CONFIG[sp_id]['color']
+                # Get genome-based color
+                cell_genome = genome[y, x]
+                base_color = genome_to_color(cell_genome)
 
                 # Modulate by energy (brightness)
                 energy_norm = min(1.0, energy[y, x] / 100.0)
@@ -260,13 +257,11 @@ class PyGameRenderer:
         self.stats_surface.blit(title, (10, y_offset))
         y_offset += 50
 
-        # Basic stats
+        # Basic stats (genome-based system, no species tracking)
         total_pop = self.game.history['population'][-1] if self.game.history['population'] else 0
-        alive_species = sum(1 for sp in SPECIES_CONFIG if not sp.get('extinct', False))
 
         stats_lines = [
             f"Generation: {self.game.generation:,}",
-            f"Species: {alive_species}",
             f"Population: {total_pop:,}",
             f"",
             f"FPS: {int(np.mean(self.fps_history)) if self.fps_history else 0}",
@@ -276,58 +271,15 @@ class PyGameRenderer:
             f"Zoom: {self.camera_zoom:.2f}x",
             f"Chemical: {'ON' if self.show_chemical else 'OFF'}",
             f"Grid: {'ON' if self.show_grid else 'OFF'}",
+            f"",
+            f"Genome-Based Evolution",
+            f"Colors reflect genome similarity",
         ]
 
         for line in stats_lines:
             text = self.font_small.render(line, True, COLOR_TEXT)
             self.stats_surface.blit(text, (10, y_offset))
             y_offset += 22
-
-        # Species list
-        y_offset += 20
-        title = self.font_medium.render('Species', True, COLOR_TEXT)
-        self.stats_surface.blit(title, (10, y_offset))
-        y_offset += 30
-
-        # Gather species data
-        species_data = []
-        for sp_id in range(len(SPECIES_CONFIG)):
-            if SPECIES_CONFIG[sp_id].get('extinct', False):
-                continue
-
-            if sp_id < len(self.game.history['species']) and self.game.history['species'][sp_id]:
-                count = self.game.history['species'][sp_id][-1]
-            else:
-                count = 0
-
-            if count == 0:
-                continue
-
-            name = SPECIES_CONFIG[sp_id]['name']
-            pct = (count / total_pop * 100) if total_pop > 0 else 0
-            color_tuple = SPECIES_CONFIG[sp_id]['color']
-            color = tuple(int(c * 255) for c in color_tuple)
-
-            species_data.append((name, count, pct, color))
-
-        # Sort by population
-        species_data.sort(key=lambda x: x[1], reverse=True)
-
-        # Render species entries
-        for name, count, pct, color in species_data[:20]:  # Limit to top 20
-            if y_offset > WINDOW_HEIGHT - 30:
-                break
-
-            # Color square
-            rect = pygame.Rect(10, y_offset, 15, 15)
-            pygame.draw.rect(self.stats_surface, color, rect)
-            pygame.draw.rect(self.stats_surface, COLOR_TEXT, rect, 1)
-
-            # Species info
-            text = self.font_small.render(f"{name[:8]:8s} {count:5d} {pct:4.1f}%",
-                                         True, COLOR_TEXT)
-            self.stats_surface.blit(text, (30, y_offset))
-            y_offset += 20
 
         # Copy to main window
         self.window.blit(self.stats_surface, (self.stats_panel_x, 0))

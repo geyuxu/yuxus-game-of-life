@@ -129,223 +129,13 @@ ACTION_EAT = 5
 ACTION_REPRODUCE = 6
 
 # =============================================================================
-# SPECIES MANAGEMENT
+# GENOME-BASED IDENTITY (No Species IDs)
 # =============================================================================
-SPECIES_CONFIG = []
-SPECIES_CHILD_COUNT = {}
+# All cells share the same base parameters
+# Individual identity comes from genome (12-dim fingerprint)
 
-
-def generate_random_color(index: int) -> tuple:
-    """Generate a visually distinct color using HSV color space with golden ratio.
-
-    Args:
-        index: Species ID (used to generate unique color)
-    """
-    # Use golden ratio to maximize color difference between adjacent species
-    # This ensures new species have visually distinct colors even with many species
-    GOLDEN_RATIO = 0.618033988749895
-    hue = (index * GOLDEN_RATIO) % 1.0
-
-    # Vary saturation and value for additional distinction
-    # Use index-based seed for reproducibility
-    np.random.seed(index + 1000)
-    saturation = 0.65 + np.random.random() * 0.35
-    value = 0.70 + np.random.random() * 0.30
-
-    return colorsys.hsv_to_rgb(hue, saturation, value)
-
-
-def create_species_config(sp_id: int, num_total: int, name: str = None) -> dict:
-    """Create configuration for a single species."""
-    prey_list = [j for j in range(num_total) if j != sp_id]
-
-    # Initialize random chemical preferences (evolvable)
-    # Each species has affinity to different chemicals
-    np.random.seed(sp_id + 5000)  # Different seed for chemical preferences
-    chemical_affinity = np.random.randn(NUM_CHEMICALS) * 0.5
-
-    return {
-        'name': name or f'S{sp_id}',
-        'color': generate_random_color(sp_id),
-        'prey': prey_list,
-        'metabolism': SPECIES_METABOLISM,
-        'repro_threshold': SPECIES_REPRO_THRESHOLD,
-        'repro_cost': SPECIES_REPRO_COST,
-        'offspring_energy': SPECIES_OFFSPRING_ENERGY,
-        'starvation': SPECIES_STARVATION,
-        'hidden_size': SPECIES_HIDDEN_SIZE,
-        'parent': None,
-        'extinct': False,
-        'extinct_gen': None,  # Generation when species went extinct (for recycling)
-        'chemical_affinity': chemical_affinity.tolist(),  # Preference for each chemical type
-    }
-
-
-def find_recyclable_species(current_gen: int) -> int:
-    """
-    Find a species slot that can be recycled (extinct for EXTINCT_RECYCLE_DELAY generations).
-
-    Returns:
-        The ID of a recyclable species, or None if none available
-    """
-    for sp_id, sp in enumerate(SPECIES_CONFIG):
-        if sp['extinct'] and sp['extinct_gen'] is not None:
-            if current_gen - sp['extinct_gen'] >= EXTINCT_RECYCLE_DELAY:
-                return sp_id
-    return None
-
-
-def create_child_species(parent_id: int, hidden_delta: int = HIDDEN_SIZE_INCREMENT, current_gen: int = 0) -> int:
-    """
-    Create a new child species from a parent species.
-
-    Args:
-        parent_id: The ID of the parent species
-        hidden_delta: Change in hidden layer size (can be positive or negative)
-        current_gen: Current generation (for species recycling)
-
-    Returns:
-        The ID of the new species, or None if max species reached
-    """
-    # Check if we've reached the maximum number of active species
-    active_count = sum(1 for sp in SPECIES_CONFIG if not sp['extinct'])
-    if active_count >= MAX_ACTIVE_SPECIES:
-        return None  # Prevent performance issues from too many active species
-
-    # First, try to recycle an extinct species slot
-    recycled_id = find_recyclable_species(current_gen)
-
-    if recycled_id is not None:
-        # Recycle the extinct species slot
-        new_id = recycled_id
-        old_name = SPECIES_CONFIG[new_id]['name']
-
-        # Generate lineage-based name
-        parent_name = SPECIES_CONFIG[parent_id]['name']
-        child_num = SPECIES_CHILD_COUNT.get(parent_id, 0) + 1
-        SPECIES_CHILD_COUNT[parent_id] = child_num
-        new_name = f"{parent_name}_{child_num}"
-
-        # Reset the species config
-        parent_hidden = SPECIES_CONFIG[parent_id]['hidden_size']
-        new_hidden = max(MIN_HIDDEN_SIZE, min(parent_hidden + hidden_delta, MAX_HIDDEN_SIZE))
-
-        # Inherit and mutate chemical affinity from parent
-        parent_chem = np.array(SPECIES_CONFIG[parent_id]['chemical_affinity'])
-        child_chem = parent_chem + np.random.randn(NUM_CHEMICALS) * SPLIT_MUTATION_RATE
-
-        SPECIES_CONFIG[new_id] = {
-            'name': new_name,
-            'color': generate_random_color(new_id),
-            'prey': [j for j in range(len(SPECIES_CONFIG)) if j != new_id],
-            'metabolism': SPECIES_METABOLISM,
-            'repro_threshold': SPECIES_REPRO_THRESHOLD,
-            'repro_cost': SPECIES_REPRO_COST,
-            'offspring_energy': SPECIES_OFFSPRING_ENERGY,
-            'starvation': SPECIES_STARVATION,
-            'hidden_size': new_hidden,
-            'parent': parent_id,
-            'extinct': False,
-            'extinct_gen': None,
-            'chemical_affinity': child_chem.tolist(),
-        }
-
-        # Reset child count for recycled slot
-        SPECIES_CHILD_COUNT[new_id] = 0
-
-        print(f"             [Recycled slot {new_id} from extinct {old_name}]")
-
-    else:
-        # Create new species slot
-        new_id = len(SPECIES_CONFIG)
-        if new_id >= MAX_SPECIES:
-            return None
-
-        # Generate lineage-based name: S{parent}_{child_num}
-        parent_name = SPECIES_CONFIG[parent_id]['name']
-        child_num = SPECIES_CHILD_COUNT.get(parent_id, 0) + 1
-        SPECIES_CHILD_COUNT[parent_id] = child_num
-        new_name = f"{parent_name}_{child_num}"
-
-        new_config = create_species_config(new_id, new_id + 1, name=new_name)
-        new_config['parent'] = parent_id
-
-        # Apply hidden layer delta (can gain or lose neurons)
-        parent_hidden = SPECIES_CONFIG[parent_id]['hidden_size']
-        new_hidden = max(MIN_HIDDEN_SIZE, min(parent_hidden + hidden_delta, MAX_HIDDEN_SIZE))
-        new_config['hidden_size'] = new_hidden
-
-        # Inherit and mutate chemical affinity from parent
-        parent_chem = np.array(SPECIES_CONFIG[parent_id]['chemical_affinity'])
-        child_chem = parent_chem + np.random.randn(NUM_CHEMICALS) * SPLIT_MUTATION_RATE
-        new_config['chemical_affinity'] = child_chem.tolist()
-
-        SPECIES_CONFIG.append(new_config)
-
-        # Update all existing species' prey lists
-        for sp_id in range(new_id):
-            SPECIES_CONFIG[sp_id]['prey'].append(new_id)
-
-    # Rebuild GPU tensors
-    global SPECIES_TENSORS
-    SPECIES_TENSORS = build_species_tensors()
-
-    return new_id
-
-
-def add_new_species(parent_id: int, current_gen: int = 0) -> int:
-    """Create a new species by splitting (always gains neurons). Kept for backward compatibility."""
-    return create_child_species(parent_id, hidden_delta=HIDDEN_SIZE_INCREMENT, current_gen=current_gen)
-
-
-# Initialize species
-for i in range(INITIAL_NUM_SPECIES):
-    SPECIES_CONFIG.append(create_species_config(i, INITIAL_NUM_SPECIES, name=f'S{i}'))
-    SPECIES_CHILD_COUNT[i] = 0
-
-
-def build_species_tensors():
-    """Build GPU tensors for species parameters (called when species change)."""
-    num_sp = len(SPECIES_CONFIG)
-
-    # Parameter lookup tensors [MAX_SPECIES]
-    metabolism = torch.zeros(MAX_SPECIES, dtype=torch.float32, device=DEVICE)
-    repro_threshold = torch.zeros(MAX_SPECIES, dtype=torch.float32, device=DEVICE)
-    repro_cost = torch.zeros(MAX_SPECIES, dtype=torch.float32, device=DEVICE)
-    offspring_energy = torch.zeros(MAX_SPECIES, dtype=torch.float32, device=DEVICE)
-    starvation = torch.zeros(MAX_SPECIES, dtype=torch.float32, device=DEVICE)
-    hidden_sizes = torch.zeros(MAX_SPECIES, dtype=torch.int32, device=DEVICE)
-
-    for sp_id in range(num_sp):
-        sp = SPECIES_CONFIG[sp_id]
-        metabolism[sp_id] = sp['metabolism']
-        repro_threshold[sp_id] = sp['repro_threshold']
-        repro_cost[sp_id] = sp['repro_cost']
-        offspring_energy[sp_id] = sp['offspring_energy']
-        starvation[sp_id] = sp['starvation']
-        hidden_sizes[sp_id] = sp['hidden_size']
-
-    # Prey matrix [MAX_SPECIES, MAX_SPECIES] - prey_matrix[pred][prey] = 1 if pred can eat prey
-    prey_matrix = torch.zeros((MAX_SPECIES, MAX_SPECIES), dtype=torch.bool, device=DEVICE)
-    for sp_id in range(num_sp):
-        for prey_id in SPECIES_CONFIG[sp_id]['prey']:
-            if prey_id < MAX_SPECIES:
-                prey_matrix[sp_id, prey_id] = True
-
-    return {
-        'metabolism': metabolism,
-        'repro_threshold': repro_threshold,
-        'repro_cost': repro_cost,
-        'offspring_energy': offspring_energy,
-        'starvation': starvation,
-        'hidden_sizes': hidden_sizes,
-        'prey_matrix': prey_matrix,
-        'num_species': num_sp,
-    }
-
-
-# Global species tensors (rebuilt when species split)
-SPECIES_TENSORS = build_species_tensors()
+# Genome-based mate finding
+MATE_GENOME_THRESHOLD = 0.5  # Max genome distance for compatible mates (lower = more selective)
 
 
 # =============================================================================
@@ -555,7 +345,6 @@ class GPULifeGame:
         # State tensors
         self.alive = torch.zeros((size, size), dtype=torch.bool, device=DEVICE)
         self.energy = torch.zeros((size, size), dtype=torch.float32, device=DEVICE)
-        self.species = torch.zeros((size, size), dtype=torch.int32, device=DEVICE)
         self.hunger = torch.zeros((size, size), dtype=torch.int32, device=DEVICE)
         self.is_newborn = torch.zeros((size, size), dtype=torch.bool, device=DEVICE)
 
@@ -594,11 +383,7 @@ class GPULifeGame:
         self.saved_w1, self.saved_w2, self.saved_hidden_size = self._load_saved_weights()
         self._spawn_initial_cells()
 
-        self.history = {'population': [], 'species': [[] for _ in range(len(SPECIES_CONFIG))]}
-
-        # Blob separation tracking: {species_id: {blob_hash: first_seen_gen}}
-        # When a species has multiple blobs, track when each blob was first detected
-        self.blob_separation_tracker = {}
+        self.history = {'population': []}
 
     # -------------------------------------------------------------------------
     # Weight Persistence
@@ -683,9 +468,8 @@ class GPULifeGame:
             self.best_fitness = max_fitness
             self.best_w1 = self.w1[r, c].clone()
             self.best_w2 = self.w2[r, c].clone()
-            # Track the hidden size of the best individual's species
-            sp_id = self.species[r, c].item()
-            self.best_hidden_size = SPECIES_CONFIG[sp_id]['hidden_size']
+            # Use default hidden size (all cells share same architecture)
+            self.best_hidden_size = SPECIES_HIDDEN_SIZE
 
     # -------------------------------------------------------------------------
     # Genome Computation (Scheme C: Hybrid Genome)
@@ -696,7 +480,7 @@ class GPULifeGame:
 
         Returns 12-dimensional genome combining:
         - Neural fingerprint (8-dim): Statistical features from w1, w2
-        - Chemical affinity (4-dim): Species chemical preferences
+        - Chemical affinity (4-dim): From self.genome (already stored)
 
         Args:
             y: Row position
@@ -712,13 +496,11 @@ class GPULifeGame:
         w1_cell = self.w1[y, x]  # [INPUT_SIZE, MAX_HIDDEN_SIZE]
         w2_cell = self.w2[y, x]  # [MAX_HIDDEN_SIZE, NUM_ACTIONS]
 
-        # Get species info
-        sp_id = self.species[y, x].item()
-        hidden_size = SPECIES_CONFIG[sp_id]['hidden_size']
-        chemical_affinity = SPECIES_CONFIG[sp_id]['chemical_affinity']
+        # Chemical affinity is already stored in self.genome (last 4 dimensions)
+        chemical_affinity = self.genome[y, x, 8:12].cpu().numpy()
 
         # Compute hybrid genome
-        return get_full_genome(w1_cell, w2_cell, hidden_size, chemical_affinity)
+        return get_full_genome(w1_cell, w2_cell, SPECIES_HIDDEN_SIZE, chemical_affinity)
 
     def compute_all_genomes(self) -> dict:
         """
@@ -738,48 +520,6 @@ class GPULifeGame:
 
         return genomes
 
-    def update_species_colors_from_genome(self):
-        """
-        Update species colors based on average genome of population.
-
-        This creates genome-based coloring where similar genomes have similar colors.
-        Can be called periodically to update visualization based on evolution.
-        """
-        # Compute genome for each species (average of all members)
-        species_genomes = {}
-
-        for sp_id in range(len(SPECIES_CONFIG)):
-            if SPECIES_CONFIG[sp_id].get('extinct', False):
-                continue
-
-            # Find all cells of this species
-            species_mask = (self.species == sp_id) & self.alive
-            if not species_mask.any():
-                continue
-
-            # Sample up to 100 cells for efficiency
-            positions = species_mask.nonzero(as_tuple=False)
-            if len(positions) > 100:
-                indices = torch.randperm(len(positions))[:100]
-                positions = positions[indices]
-
-            # Compute average genome
-            genomes = []
-            for pos in positions:
-                y, x = pos[0].item(), pos[1].item()
-                genome = self.compute_genome(y, x)
-                if genome is not None:
-                    genomes.append(genome)
-
-            if genomes:
-                avg_genome = np.mean(genomes, axis=0)
-                species_genomes[sp_id] = avg_genome
-
-                # Update color based on genome
-                new_color = genome_to_color(avg_genome)
-                SPECIES_CONFIG[sp_id]['color'] = new_color
-
-        return species_genomes
 
     # -------------------------------------------------------------------------
     # Initialization
@@ -792,26 +532,19 @@ class GPULifeGame:
         cols = positions % self.size
         self.alive[rows, cols] = True
         self.energy[rows, cols] = INITIAL_ENERGY
-        self.species[rows, cols] = torch.randint(0, len(SPECIES_CONFIG), (num_cells,), dtype=torch.int32, device=DEVICE)
 
-        if self.saved_w1 is None or self.saved_w2 is None:
-            return
+        # Initialize genome with spatial diversity
+        # Chemical affinity (last 4 dims) varies by position for initial diversity
+        for i in range(num_cells):
+            r, c = rows[i].item(), cols[i].item()
+            # Position-based seed for reproducible but varied initialization
+            position_seed = r * self.size + c
+            torch.manual_seed(position_seed + 1000)
+            # Chemical affinity: position-dependent randomization
+            self.genome[r, c, 8:12] = torch.randn(NUM_CHEMICALS, device=DEVICE) * 0.5
 
-        if ARGS.validate:
-            # Validation mode: only S0 uses trained weights
-            species_tensor = self.species[rows, cols]
-            s0_mask = (species_tensor == 0)
-            s0_count = s0_mask.sum().item()
-            if s0_count > 0:
-                s0_rows = rows[s0_mask]
-                s0_cols = cols[s0_mask]
-                self.w1[s0_rows, s0_cols] = self.saved_w1.clone() + torch.randn_like(self.saved_w1) * 0.05
-                self.w2[s0_rows, s0_cols] = self.saved_w2.clone() + torch.randn_like(self.saved_w2) * 0.05
-                print(f"Validation mode: {s0_count} S0 cells use trained weights")
-                print(f"                 S1/S2 use random weights (control group)")
-        else:
-            # Normal mode: elite cells use trained weights
-            # Only load partial hidden neurons from saved weights, keep rest random for diversity
+        # Load saved weights for elite cells (50% saved + 50% random for diversity)
+        if self.saved_w1 is not None and self.saved_w2 is not None:
             num_elite = int(num_cells * ELITE_RATIO)
             if num_elite > 0:
                 elite_indices = torch.randperm(num_cells, device=DEVICE)[:num_elite]
@@ -837,6 +570,13 @@ class GPULifeGame:
                 # This creates diversity: each cell has 50% learned + 50% random
                 print(f"{num_elite} cells inherited saved weights (50% saved + 50% random for diversity)")
 
+        # Update genome neural fingerprints based on initialized weights
+        for i in range(num_cells):
+            r, c = rows[i].item(), cols[i].item()
+            genome_np = self.compute_genome(r, c)
+            if genome_np is not None:
+                self.genome[r, c] = torch.from_numpy(genome_np).float().to(DEVICE)
+
     # -------------------------------------------------------------------------
     # Neural Network
     # -------------------------------------------------------------------------
@@ -848,26 +588,36 @@ class GPULifeGame:
         """Build neural network input features from environment state."""
         alive_f = self.alive.float()
         energy_norm = self.energy / MAX_ENERGY
-        species_f = self.species.float()
 
         dirs = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
         neighbor_energy = torch.stack([self._get_shifted(energy_norm * alive_f, dr, dc) for dr, dc in dirs], dim=-1)
         neighbor_alive = torch.stack([self._get_shifted(alive_f, dr, dc) for dr, dc in dirs], dim=-1)
-        neighbor_species = torch.stack([self._get_shifted(species_f * alive_f, dr, dc) for dr, dc in dirs], dim=-1)
 
-        same = (neighbor_species == species_f.unsqueeze(-1)) * neighbor_alive
-        same_count = same.sum(dim=-1, keepdim=True)
-        diff_count = neighbor_alive.sum(dim=-1, keepdim=True) - same_count
+        # Compute genome-based similarity: use chemical affinity (last 4 dims of genome)
+        # for efficient similarity calculation
+        chem_affinity = self.genome[:, :, 8:12]  # [H, W, 4]
+        similar_count = torch.zeros((self.size, self.size, 1), device=DEVICE)
+
+        for dr, dc in dirs:
+            neighbor_chem = self._get_shifted(chem_affinity, dr, dc)  # [H, W, 4]
+            neighbor_is_alive = self._get_shifted(alive_f, dr, dc)  # [H, W]
+            # Compute distance in chemical affinity space
+            distance = torch.norm(chem_affinity - neighbor_chem, dim=-1)  # [H, W]
+            is_similar = (distance < MATE_GENOME_THRESHOLD).float() * neighbor_is_alive
+            similar_count[:, :, 0] += is_similar
+
+        total_neighbors = neighbor_alive.sum(dim=-1, keepdim=True)
+        diff_count = total_neighbors - similar_count
 
         # Local chemical concentrations (transpose for correct indexing)
         local_chemicals = self.chemicals[:, :, :].permute(1, 2, 0)  # [H, W, NUM_CHEMICALS]
 
         inputs = torch.cat([
             neighbor_energy,                                    # 8: neighbor energy levels
-            same_count / 8.0,                                   # 1: same species count
-            diff_count / 8.0,                                   # 1: different species count
+            similar_count / 8.0,                                # 1: similar genome count (was same species)
+            diff_count / 8.0,                                   # 1: different genome count
             energy_norm.unsqueeze(-1),                          # 1: own energy
-            (neighbor_alive.sum(dim=-1) / 8.0).unsqueeze(-1),   # 1: total neighbor count
+            total_neighbors / 8.0,                              # 1: total neighbor count
             torch.zeros((self.size, self.size, 8), device=DEVICE),  # 8: padding
             local_chemicals * CHEMICAL_INPUT_WEIGHT,            # NUM_CHEMICALS: local chemical signals
         ], dim=-1)
@@ -877,9 +627,8 @@ class GPULifeGame:
         """Batch forward pass through all cells' neural networks (CUDA optimized)."""
         h = torch.tanh(torch.einsum('ijk,ijkl->ijl', inputs, self.w1))
 
-        # Apply species-specific hidden layer mask (vectorized lookup)
-        hidden_sizes = self._get_species_param_fast(SPECIES_TENSORS['hidden_sizes'].float()).int()
-        mask = (self.neuron_idx < hidden_sizes.unsqueeze(-1)).float()
+        # Apply hidden layer mask (all cells share same architecture)
+        mask = (self.neuron_idx < SPECIES_HIDDEN_SIZE).float()
         h = h * mask
 
         logits = torch.einsum('ijk,ijkl->ijl', h, self.w2)
@@ -904,23 +653,6 @@ class GPULifeGame:
     # -------------------------------------------------------------------------
     # Game Logic (CUDA Optimized)
     # -------------------------------------------------------------------------
-    def _get_species_param_fast(self, param_tensor):
-        """Get species-specific parameter using pre-built lookup tensor (O(1) per cell)."""
-        # param_tensor is [MAX_SPECIES], self.species is [H, W]
-        # Use advanced indexing for vectorized lookup
-        species_clamped = self.species.clamp(0, MAX_SPECIES - 1).long()
-        return param_tensor[species_clamped]
-
-    def _is_valid_prey_fast(self, predator_species, neighbor_species):
-        """Check if neighbors are valid prey using pre-built prey matrix (O(1))."""
-        # prey_matrix[pred, prey] = True if pred can eat prey
-        pred_clamped = predator_species.clamp(0, MAX_SPECIES - 1).long()
-        prey_clamped = neighbor_species.clamp(0, MAX_SPECIES - 1).long()
-        # Flatten for 2D indexing, then reshape
-        flat_pred = pred_clamped.view(-1)
-        flat_prey = prey_clamped.view(-1)
-        result = SPECIES_TENSORS['prey_matrix'][flat_pred, flat_prey]
-        return result.view(predator_species.shape)
 
     def _diffuse_chemicals(self):
         """Diffuse chemicals across the grid using convolution."""
@@ -949,30 +681,22 @@ class GPULifeGame:
         self.chemicals *= (1 - CHEMICAL_DECAY)
 
     def _secrete_chemicals(self):
-        """Cells secrete chemicals based on their species' chemical affinity."""
+        """Cells secrete chemicals based on their genome's chemical affinity."""
         if not self.alive.any():
             return
 
-        # For each alive cell, add its chemical signature
-        alive_mask = self.alive.cpu().numpy()
-        species_mask = self.species.cpu().numpy()
+        # Each cell secretes based on its genome (last 4 dimensions = chemical affinity)
+        # genome[:, :, 8:12] = [H, W, NUM_CHEMICALS]
+        chem_affinity = self.genome[:, :, 8:12]  # [H, W, 4]
 
         for chem_id in range(NUM_CHEMICALS):
-            secretion_map = torch.zeros((self.size, self.size), dtype=torch.float32, device=DEVICE)
-
-            for sp_id in range(len(SPECIES_CONFIG)):
-                if SPECIES_CONFIG[sp_id]['extinct']:
-                    continue
-
-                # Get species-specific secretion for this chemical
-                affinity = SPECIES_CONFIG[sp_id]['chemical_affinity'][chem_id]
-                sp_cells = alive_mask & (species_mask == sp_id)
-
-                if sp_cells.any():
-                    # Positive affinity = secretion, negative = absorption
-                    if affinity > 0:
-                        secretion_map[torch.from_numpy(sp_cells).to(DEVICE)] += CHEMICAL_SECRETION * affinity
-
+            affinity_map = chem_affinity[:, :, chem_id]  # [H, W]
+            # Positive affinity = secretion, negative = absorption/none
+            secretion_map = torch.where(
+                self.alive & (affinity_map > 0),
+                CHEMICAL_SECRETION * affinity_map,
+                torch.zeros_like(affinity_map)
+            )
             self.chemicals[chem_id] += secretion_map
 
         # Clamp to prevent overflow
@@ -986,9 +710,8 @@ class GPULifeGame:
         self._diffuse_chemicals()
         self._secrete_chemicals()
 
-        # Metabolism (vectorized lookup)
-        metabolism_map = self._get_species_param_fast(SPECIES_TENSORS['metabolism'])
-        self.energy = torch.where(self.alive, self.energy - metabolism_map, self.energy)
+        # Metabolism (all cells share same metabolism rate)
+        self.energy = torch.where(self.alive, self.energy - SPECIES_METABOLISM, self.energy)
 
         # Crowding penalty (already optimized with conv2d)
         alive_f = self.alive.float()
@@ -997,10 +720,9 @@ class GPULifeGame:
         crowding_cost = torch.clamp(neighbors - CROWDING_THRESHOLD, min=0) * CROWDING_PENALTY
         self.energy = torch.where(self.alive, self.energy - crowding_cost, self.energy)
 
-        # Starvation (vectorized lookup)
+        # Starvation (all cells share same starvation limit)
         self.hunger = torch.where(self.alive, self.hunger + 1, self.hunger)
-        starvation_map = self._get_species_param_fast(SPECIES_TENSORS['starvation'])
-        self.energy = torch.where(self.hunger >= starvation_map.int(), torch.zeros_like(self.energy), self.energy)
+        self.energy = torch.where(self.hunger >= SPECIES_STARVATION, torch.zeros_like(self.energy), self.energy)
 
         # Neural network decision
         inputs = self._build_inputs()
@@ -1024,46 +746,21 @@ class GPULifeGame:
         # RL update
         self._apply_rl_update()
 
-        # Random mutation (every MUTATION_INTERVAL generations)
-        self._check_random_mutation()
-
-        # Blob separation speciation (geographic isolation)
-        self._check_blob_separation()
-
-        # Species splitting (dominant species)
-        self._check_and_split_dominant_species()
-
         # Save best network periodically (only if auto-save enabled)
         self._update_best_network()
         if AUTO_SAVE_ENABLED and self.generation > 0 and self.generation % SAVE_INTERVAL == 0:
             self._save_best_weights()
 
-        # Update species colors based on genome (if enabled)
-        if GENOME_BASED_COLOR and self.generation > 0 and self.generation % GENOME_COLOR_UPDATE_INTERVAL == 0:
-            self.update_species_colors_from_genome()
-
         self.generation += 1
 
-        # Statistics (vectorized with bincount)
-        alive_species = self.species[self.alive].long()
-        if len(alive_species) > 0:
-            counts = torch.bincount(alive_species, minlength=MAX_SPECIES)
-            total = len(alive_species)
-        else:
-            counts = torch.zeros(MAX_SPECIES, dtype=torch.long, device=DEVICE)
-            total = 0
-
-        for sp_id in range(len(SPECIES_CONFIG)):
-            self.history['species'][sp_id].append(counts[sp_id].item())
+        # Statistics (simple population count)
+        total = self.alive.sum().item()
         self.history['population'].append(total)
 
         # Sliding window: trim old history to reduce memory
         if HISTORY_WINDOW > 0 and len(self.history['population']) > HISTORY_WINDOW:
             trim = len(self.history['population']) - HISTORY_WINDOW
             self.history['population'] = self.history['population'][trim:]
-            for sp_id in range(len(self.history['species'])):
-                if len(self.history['species'][sp_id]) > HISTORY_WINDOW:
-                    self.history['species'][sp_id] = self.history['species'][sp_id][trim:]
 
     def _parallel_actions(self, actions):
         """Execute all actions in parallel (optimized: reduced .any() calls, shared random tensor)."""
@@ -1084,10 +781,10 @@ class GPULifeGame:
 
             # Direct tensor indexing (empty mask = no-op, no .any() needed)
             move_energy = self.energy[winner]
-            move_species = self.species[winner]
             move_hunger = self.hunger[winner]
             move_w1 = self.w1[winner]
             move_w2 = self.w2[winner]
+            move_genome = self.genome[winner]
 
             self.alive[winner] = False
             self.energy[winner] = 0
@@ -1096,43 +793,43 @@ class GPULifeGame:
             new_c = target_c[winner]
             self.alive[new_r, new_c] = True
             self.energy[new_r, new_c] = move_energy
-            self.species[new_r, new_c] = move_species
             self.hunger[new_r, new_c] = move_hunger
             self.w1[new_r, new_c] = move_w1
             self.w2[new_r, new_c] = move_w2
+            self.genome[new_r, new_c] = move_genome
 
         # Eating (always call, method handles empty mask efficiently)
         is_eat = self.alive & (actions == ACTION_EAT)
         self._parallel_eat(is_eat)
 
         # Reproduction (always call, method handles empty mask efficiently)
-        repro_threshold = self._get_species_param_fast(SPECIES_TENSORS['repro_threshold'])
-        is_reproduce = self.alive & (actions == ACTION_REPRODUCE) & (self.energy >= repro_threshold)
+        is_reproduce = self.alive & (actions == ACTION_REPRODUCE) & (self.energy >= SPECIES_REPRO_THRESHOLD)
         self._parallel_reproduce(is_reproduce, rand_shared)
 
     def _parallel_eat(self, is_eat):
-        """Handle predation between species (optimized: unified loop, reduced .any() calls)."""
-        my_species = self.species
-
+        """Handle predation based on genome dissimilarity."""
         # All directions in priority order (basic first, then extended)
         all_dirs = [(-1, 0), (1, 0), (0, -1), (0, 1),  # basic
                     (-1, -1), (-1, 1), (1, -1), (1, 1), (-2, 0), (2, 0), (0, -2), (0, 2)]  # extended
 
-        # Build predator mask using vectorized lookup (all species with prey can hunt)
-        # Since all species can hunt all others, this is just alive & is_eat
         predator_eat = is_eat
 
         # Pre-generate single random tensor for all directions (reused)
         rand_attack = torch.rand((self.size, self.size), device=DEVICE)
 
+        # Get chemical affinity for genome-based prey detection
+        my_chem = self.genome[:, :, 8:12]  # [H, W, 4]
+
         for dr, dc in all_dirs:
             neighbor_r = (self.rows + dr) % self.size
             neighbor_c = (self.cols + dc) % self.size
             neighbor_alive = self.alive[neighbor_r, neighbor_c]
-            neighbor_species = self.species[neighbor_r, neighbor_c]
+            neighbor_chem = my_chem[neighbor_r, neighbor_c]  # [H, W, 4]
             neighbor_energy = self.energy[neighbor_r, neighbor_c]
 
-            is_valid_prey = self._is_valid_prey_fast(my_species, neighbor_species)
+            # Can eat if genome is sufficiently different (not same "kind")
+            genome_dist = torch.norm(my_chem - neighbor_chem, dim=-1)  # [H, W]
+            is_valid_prey = (genome_dist >= MATE_GENOME_THRESHOLD)  # Opposite of mating criterion
             can_attack = predator_eat & neighbor_alive & is_valid_prey
 
             # Dynamic combat success based on chemical "strength"
@@ -1170,22 +867,17 @@ class GPULifeGame:
 
     def _parallel_reproduce(self, is_reproduce, rand_shared=None):
         """
-        Handle reproduction with sexual crossover inheritance and mutation.
+        Handle reproduction with genome-based mate finding and sexual crossover.
 
         Sexual reproduction (crossover):
-        - Find a mate (same-species neighbor)
-        - Offspring inherits neurons randomly from father/mother (50/50 interleaved)
+        - Find a mate (similar genome neighbor, distance < MATE_GENOME_THRESHOLD)
+        - Offspring inherits: neurons (50/50 from parents) + genome (50/50 from parents)
         - Apply mutation after inheritance
 
         Asexual reproduction (fallback):
-        - If no mate found, clone parent with mutation
+        - If no compatible mate found, clone parent with mutation
         """
         dirs = [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1), (-1, -1), (1, -1), (-1, 1)]
-
-        # Vectorized parameter lookups
-        repro_threshold = self._get_species_param_fast(SPECIES_TENSORS['repro_threshold'])
-        repro_cost = self._get_species_param_fast(SPECIES_TENSORS['repro_cost'])
-        offspring_energy = self._get_species_param_fast(SPECIES_TENSORS['offspring_energy'])
 
         # Use shared random or generate new
         if rand_shared is None:
@@ -1195,28 +887,27 @@ class GPULifeGame:
             target_r = (self.rows + dr) % self.size
             target_c = (self.cols + dc) % self.size
             target_empty = ~self.alive[target_r, target_c]
-            can_reproduce = is_reproduce & target_empty & (self.energy >= repro_threshold)
+            can_reproduce = is_reproduce & target_empty & (self.energy >= SPECIES_REPRO_THRESHOLD)
             winner = can_reproduce & (rand_shared > 0.5)
 
             if not winner.any():
                 continue
 
             # Direct tensor operations
-            self.energy[winner] -= repro_cost[winner]
+            self.energy[winner] -= SPECIES_REPRO_COST
             self.reward[winner] += REWARD_REPRODUCE
             self.repro_count[winner] += 1
 
             child_r = target_r[winner]
             child_c = target_c[winner]
             self.alive[child_r, child_c] = True
-            self.energy[child_r, child_c] = offspring_energy[winner]
-            self.species[child_r, child_c] = self.species[winner]
+            self.energy[child_r, child_c] = SPECIES_OFFSPRING_ENERGY
             self.hunger[child_r, child_c] = 0
             self.is_newborn[child_r, child_c] = True
 
-            # Sexual reproduction: find mates (same-species neighbors)
+            # Sexual reproduction: find mates (similar genome neighbors)
             parent1_r, parent1_c = self.rows[winner], self.cols[winner]
-            parent1_species = self.species[winner]
+            parent1_genome = self.genome[parent1_r, parent1_c]  # [N, 12]
             num_parents = len(parent1_r)
 
             # Search for mate in 8 neighbors
@@ -1232,14 +923,18 @@ class GPULifeGame:
                 candidate_c = (parent1_c + mate_dc) % self.size
 
                 is_alive = self.alive[candidate_r, candidate_c]
-                same_species = (self.species[candidate_r, candidate_c] == parent1_species)
-                is_valid_mate = is_alive & same_species & ~mate_found
+                candidate_genome = self.genome[candidate_r, candidate_c]  # [N, 12]
+
+                # Genome compatibility: distance < threshold (similar genomes can mate)
+                genome_dist = torch.norm(parent1_genome - candidate_genome, dim=-1)  # [N]
+                is_compatible = (genome_dist < MATE_GENOME_THRESHOLD)
+                is_valid_mate = is_alive & is_compatible & ~mate_found
 
                 mate_r = torch.where(is_valid_mate, candidate_r, mate_r)
                 mate_c = torch.where(is_valid_mate, candidate_c, mate_c)
                 mate_found = mate_found | is_valid_mate
 
-            # Get parent weights
+            # Get parent weights and genomes
             parent1_w1 = self.w1[parent1_r, parent1_c]
             parent1_w2 = self.w2[parent1_r, parent1_c]
 
@@ -1251,30 +946,27 @@ class GPULifeGame:
 
                 parent2_w1 = self.w1[mate_r[sexual_indices], mate_c[sexual_indices]]
                 parent2_w2 = self.w2[mate_r[sexual_indices], mate_c[sexual_indices]]
+                parent2_genome = self.genome[mate_r[sexual_indices], mate_c[sexual_indices]]
 
-                # Create crossover mask: random 50/50 selection for each hidden neuron (only for sexual offspring)
+                # Create crossover mask: random 50/50 selection for neurons
                 crossover_mask_w1 = torch.rand((num_sexual, INPUT_SIZE, MAX_HIDDEN_SIZE), device=DEVICE) > 0.5
                 crossover_mask_w2 = torch.rand((num_sexual, MAX_HIDDEN_SIZE, NUM_ACTIONS), device=DEVICE) > 0.5
+                crossover_mask_genome = torch.rand((num_sexual, 12), device=DEVICE) > 0.5
 
-                # Crossover: interleave neurons from both parents
-                child_w1_sexual = torch.where(
-                    crossover_mask_w1,
-                    parent1_w1[sexual_indices],
-                    parent2_w1
-                )
-                child_w2_sexual = torch.where(
-                    crossover_mask_w2,
-                    parent1_w2[sexual_indices],
-                    parent2_w2
-                )
+                # Crossover: interleave neurons and genome from both parents
+                child_w1_sexual = torch.where(crossover_mask_w1, parent1_w1[sexual_indices], parent2_w1)
+                child_w2_sexual = torch.where(crossover_mask_w2, parent1_w2[sexual_indices], parent2_w2)
+                child_genome_sexual = torch.where(crossover_mask_genome, parent1_genome[sexual_indices], parent2_genome)
 
                 # Apply mutation
                 child_w1_sexual += torch.randn_like(child_w1_sexual) * MUTATION_RATE
                 child_w2_sexual += torch.randn_like(child_w2_sexual) * MUTATION_RATE
+                child_genome_sexual += torch.randn_like(child_genome_sexual) * MUTATION_RATE * 0.1  # Smaller mutation for genome
 
                 # Assign to offspring
                 self.w1[child_r[sexual_indices], child_c[sexual_indices]] = child_w1_sexual
                 self.w2[child_r[sexual_indices], child_c[sexual_indices]] = child_w2_sexual
+                self.genome[child_r[sexual_indices], child_c[sexual_indices]] = child_genome_sexual
 
             # Asexual reproduction: clone parent (fallback for cells without mate)
             asexual_mask = ~mate_found
@@ -1286,6 +978,8 @@ class GPULifeGame:
                     parent1_w1[asexual_indices] + torch.randn_like(parent1_w1[asexual_indices]) * MUTATION_RATE
                 self.w2[child_r[asexual_indices], child_c[asexual_indices]] = \
                     parent1_w2[asexual_indices] + torch.randn_like(parent1_w2[asexual_indices]) * MUTATION_RATE
+                self.genome[child_r[asexual_indices], child_c[asexual_indices]] = \
+                    parent1_genome[asexual_indices] + torch.randn_like(parent1_genome[asexual_indices]) * MUTATION_RATE * 0.1
 
             self.reward[child_r, child_c] = 0
             self.lifetime[child_r, child_c] = 0
@@ -1339,336 +1033,24 @@ class GPULifeGame:
         self.reward.fill_(0)
 
     # -------------------------------------------------------------------------
-    # Blob Detection and Separation
-    # -------------------------------------------------------------------------
-    def _find_species_blobs(self, species_id: int):
-        """
-        Find connected components (blobs) for a species using scipy's optimized label.
-        Returns list of position tensors, one per blob, sorted by size (largest first).
-        """
-        species_mask = (self.species == species_id) & self.alive
-        if not species_mask.any():
-            return []
-
-        # Use scipy's fast connected component labeling (8-connectivity)
-        mask_np = species_mask.cpu().numpy()
-        # Note: scipy doesn't handle toroidal wrapping, but for blob detection
-        # this approximation is acceptable for performance
-        labeled, num_blobs = ndimage.label(mask_np, structure=np.ones((3, 3)))
-
-        if num_blobs == 0:
-            return []
-
-        blobs = []
-        for blob_id in range(1, num_blobs + 1):
-            positions = np.argwhere(labeled == blob_id)
-            if len(positions) > 0:
-                blob_tensor = torch.tensor(positions, dtype=torch.long, device=DEVICE)
-                blobs.append(blob_tensor)
-
-        # Sort by size (largest first)
-        blobs.sort(key=lambda x: len(x), reverse=True)
-        return blobs
-
-    def _split_species_by_blob(self, species_id: int, new_species_id: int, blob_idx: int = 1):
-        """
-        Convert a specific blob of a species to a new species.
-        blob_idx=1 means convert the second largest blob (keep largest as original).
-        """
-        blobs = self._find_species_blobs(species_id)
-        if len(blobs) <= blob_idx:
-            return 0  # Not enough blobs to split
-
-        # Get the blob to convert
-        blob_positions = blobs[blob_idx]
-        blob_r = blob_positions[:, 0]
-        blob_c = blob_positions[:, 1]
-
-        # Convert to new species
-        self.species[blob_r, blob_c] = new_species_id
-
-        # Apply mutation to neural network weights
-        mutation_w1 = torch.randn_like(self.w1[blob_r, blob_c]) * SPLIT_MUTATION_RATE
-        mutation_w2 = torch.randn_like(self.w2[blob_r, blob_c]) * SPLIT_MUTATION_RATE
-        self.w1[blob_r, blob_c] += mutation_w1
-        self.w2[blob_r, blob_c] += mutation_w2
-
-        return len(blob_positions)
-
-    def _check_blob_separation(self):
-        """
-        Check for species with separated blobs and trigger speciation after BLOB_SEPARATION_DELAY.
-        """
-        if self.generation % BLOB_CHECK_INTERVAL != 0:
-            return
-
-        # Get alive species counts
-        alive_species_mask = self.species[self.alive]
-        if len(alive_species_mask) == 0:
-            return
-
-        counts = torch.bincount(alive_species_mask.long(), minlength=MAX_SPECIES)
-
-        for sp_id in range(len(SPECIES_CONFIG)):
-            if SPECIES_CONFIG[sp_id]['extinct']:
-                continue
-            if counts[sp_id].item() < 10:  # Need minimum population for blob analysis
-                # Clear tracking for small populations
-                if sp_id in self.blob_separation_tracker:
-                    del self.blob_separation_tracker[sp_id]
-                continue
-
-            blobs = self._find_species_blobs(sp_id)
-
-            if len(blobs) <= 1:
-                # Single blob or empty - clear separation tracking
-                if sp_id in self.blob_separation_tracker:
-                    del self.blob_separation_tracker[sp_id]
-                continue
-
-            # Multiple blobs detected - track separation
-            if sp_id not in self.blob_separation_tracker:
-                self.blob_separation_tracker[sp_id] = self.generation
-                # If delay is 0, speciate immediately without waiting
-                if BLOB_SEPARATION_DELAY > 0:
-                    continue
-
-            # Check if separated long enough
-            if BLOB_SEPARATION_DELAY > 0:
-                separation_duration = self.generation - self.blob_separation_tracker[sp_id]
-                if separation_duration < BLOB_SEPARATION_DELAY:
-                    continue
-
-            # Blob separation speciation!
-            # The second largest blob becomes a new species
-            second_blob_size = len(blobs[1])
-            total_size = counts[sp_id].item()
-
-            # Only speciate if second blob is significant (>10% of species)
-            if second_blob_size < total_size * 0.1:
-                continue
-
-            # Create new species with same hidden size (geographic isolation, not mutation)
-            new_species_id = create_child_species(sp_id, hidden_delta=0, current_gen=self.generation)
-            if new_species_id is None:
-                continue
-
-            # Convert the second blob to new species
-            num_converted = self._split_species_by_blob(sp_id, new_species_id, blob_idx=1)
-
-            parent_name = SPECIES_CONFIG[sp_id]['name']
-            new_name = SPECIES_CONFIG[new_species_id]['name']
-
-            if VERBOSE_SPECIATION:
-                if BLOB_SEPARATION_DELAY > 0:
-                    separation_duration = self.generation - self.blob_separation_tracker[sp_id]
-                    print(f"\n[ISOLATION] Geographic separation in {parent_name}")
-                    print(f"            Blob split after {separation_duration} generations apart")
-                else:
-                    print(f"\n[ISOLATION] Geographic separation detected in {parent_name}")
-                    print(f"            Immediate speciation triggered")
-
-                print(f"            New species: {new_name} ({num_converted} cells)")
-                print(f"            Active species: {sum(1 for sp in SPECIES_CONFIG if not sp['extinct'])}/{len(SPECIES_CONFIG)}")
-
-            # Handle history for new species
-            if new_species_id < len(self.history['species']):
-                self.history['species'][new_species_id] = [0] * len(self.history['population'])
-            else:
-                self.history['species'].append([0] * len(self.history['population']))
-
-            # Clear separation tracker for this species (now single blob)
-            del self.blob_separation_tracker[sp_id]
-
-    def _check_random_mutation(self):
-        """
-        Check for random mutations every MUTATION_INTERVAL generations.
-        Each alive species has RANDOM_MUTATION_CHANCE to spawn a mutant species.
-        Mutants can gain or lose neurons.
-        """
-        if self.generation % MUTATION_INTERVAL != 0 or self.generation == 0:
-            return
-
-        # Get alive species (those with at least 1 member)
-        alive_species_mask = self.species[self.alive]
-        if len(alive_species_mask) == 0:
-            return
-
-        counts = torch.bincount(alive_species_mask.long(), minlength=MAX_SPECIES)
-
-        for sp_id in range(len(SPECIES_CONFIG)):
-            if counts[sp_id].item() == 0:
-                continue  # Skip extinct species
-
-            if np.random.random() > RANDOM_MUTATION_CHANCE:
-                continue  # No mutation this time
-
-            # Random hidden delta: +/- HIDDEN_SIZE_INCREMENT (with slight bias toward gain)
-            if np.random.random() < 0.6:
-                hidden_delta = HIDDEN_SIZE_INCREMENT  # 60% chance to gain
-            else:
-                hidden_delta = -HIDDEN_SIZE_INCREMENT  # 40% chance to lose
-
-            new_species_id = create_child_species(sp_id, hidden_delta=hidden_delta, current_gen=self.generation)
-            if new_species_id is None:
-                continue  # Max species reached
-
-            parent_name = SPECIES_CONFIG[sp_id]['name']
-            new_name = SPECIES_CONFIG[new_species_id]['name']
-            parent_hidden = SPECIES_CONFIG[sp_id]['hidden_size']
-            new_hidden = SPECIES_CONFIG[new_species_id]['hidden_size']
-            delta_str = f"+{hidden_delta}" if hidden_delta > 0 else str(hidden_delta)
-
-            if VERBOSE_SPECIATION:
-                print(f"\n[MUTATION] Random mutation in {parent_name}")
-                print(f"           New species: {new_name}")
-                print(f"           Hidden neurons: {parent_hidden} -> {new_hidden} ({delta_str})")
-                print(f"           Active species: {sum(1 for sp in SPECIES_CONFIG if not sp['extinct'])}/{len(SPECIES_CONFIG)}")
-
-            # Handle history tracking for new/recycled species
-            if new_species_id < len(self.history['species']):
-                self.history['species'][new_species_id] = [0] * len(self.history['population'])
-            else:
-                self.history['species'].append([0] * len(self.history['population']))
-
-            # Use blob-based splitting: convert entire blob to new species
-            blobs = self._find_species_blobs(sp_id)
-            if len(blobs) >= 2:
-                # Multiple blobs: convert the second largest blob
-                num_converted = self._split_species_by_blob(sp_id, new_species_id, blob_idx=1)
-                if VERBOSE_SPECIATION:
-                    print(f"           Blob of {num_converted} cells becomes {new_name}")
-            elif len(blobs) == 1 and len(blobs[0]) > 1:
-                # Single blob: split it in half spatially
-                blob = blobs[0]
-                # Use centroid to split
-                centroid_r = blob[:, 0].float().mean()
-                half_size = len(blob) // 5  # Take 20% of the blob
-                # Sort by distance from centroid and take furthest ones
-                distances = ((blob[:, 0].float() - centroid_r) ** 2 +
-                            (blob[:, 1].float() - blob[:, 1].float().mean()) ** 2)
-                _, indices = distances.sort(descending=True)
-                split_indices = indices[:half_size]
-
-                if len(split_indices) > 0:
-                    split_r = blob[split_indices, 0]
-                    split_c = blob[split_indices, 1]
-                    self.species[split_r, split_c] = new_species_id
-                    # Apply mutation
-                    mutation_w1 = torch.randn_like(self.w1[split_r, split_c]) * SPLIT_MUTATION_RATE
-                    mutation_w2 = torch.randn_like(self.w2[split_r, split_c]) * SPLIT_MUTATION_RATE
-                    self.w1[split_r, split_c] += mutation_w1
-                    self.w2[split_r, split_c] += mutation_w2
-                    if VERBOSE_SPECIATION:
-                        print(f"           {len(split_indices)} cells (edge of blob) become {new_name}")
-
-    def _check_and_split_dominant_species(self):
-        """Split dominant species to maintain ecosystem diversity (CUDA optimized)."""
-        total_alive = self.alive.sum().item()
-        if total_alive < 10:
-            return False
-
-        # Vectorized species counting with bincount
-        alive_species = self.species[self.alive].long()
-        counts = torch.bincount(alive_species, minlength=MAX_SPECIES)
-        species_counts = counts[:len(SPECIES_CONFIG)].tolist()
-
-        max_count = max(species_counts)
-        dominant_species = species_counts.index(max_count)
-        dominance_ratio = max_count / total_alive
-
-        if dominance_ratio < DOMINANCE_THRESHOLD:
-            return False
-
-        # Mark extinct species with extinction generation
-        for sp_id, count in enumerate(species_counts):
-            if count == 0 and not SPECIES_CONFIG[sp_id]['extinct']:
-                SPECIES_CONFIG[sp_id]['extinct'] = True
-                SPECIES_CONFIG[sp_id]['extinct_gen'] = self.generation
-                # Clear blob separation tracker for extinct species
-                if sp_id in self.blob_separation_tracker:
-                    del self.blob_separation_tracker[sp_id]
-
-        new_species_id = add_new_species(dominant_species, current_gen=self.generation)
-        if new_species_id is None:
-            print(f"\nMax species limit ({MAX_SPECIES}) reached and no recyclable slots")
-            return False
-
-        parent_name = SPECIES_CONFIG[dominant_species]['name']
-        new_name = SPECIES_CONFIG[new_species_id]['name']
-        new_hidden = SPECIES_CONFIG[new_species_id]['hidden_size']
-        parent_hidden = SPECIES_CONFIG[dominant_species]['hidden_size']
-        print(f"\n[SPECIATION] {parent_name} at {dominance_ratio*100:.1f}% > {DOMINANCE_THRESHOLD*100}%")
-        print(f"             {parent_name} splits into {new_name}")
-        print(f"             Hidden neurons: {parent_hidden} -> {new_hidden}")
-        print(f"             Active species: {sum(1 for sp in SPECIES_CONFIG if not sp['extinct'])}/{len(SPECIES_CONFIG)}")
-
-        # Handle history tracking for new/recycled species
-        if new_species_id < len(self.history['species']):
-            # Recycled slot: reset history to zeros
-            self.history['species'][new_species_id] = [0] * len(self.history['population'])
-        else:
-            # New slot: append new history
-            self.history['species'].append([0] * len(self.history['population']))
-
-        # Use blob-based splitting for dominance speciation
-        blobs = self._find_species_blobs(dominant_species)
-
-        if len(blobs) >= 2:
-            # Multiple blobs: convert the second largest blob entirely
-            num_converted = self._split_species_by_blob(dominant_species, new_species_id, blob_idx=1)
-            print(f"             Blob of {num_converted} cells becomes {new_name}")
-        elif len(blobs) == 1 and len(blobs[0]) > 1:
-            # Single blob: split it in half spatially (by centroid distance)
-            blob = blobs[0]
-            centroid_r = blob[:, 0].float().mean()
-            centroid_c = blob[:, 1].float().mean()
-
-            # Sort by distance from centroid, take the far half
-            distances = ((blob[:, 0].float() - centroid_r) ** 2 +
-                        (blob[:, 1].float() - centroid_c) ** 2)
-            _, indices = distances.sort(descending=True)
-            num_to_split = len(blob) // 2
-            split_indices = indices[:num_to_split]
-
-            if len(split_indices) > 0:
-                split_r = blob[split_indices, 0]
-                split_c = blob[split_indices, 1]
-                self.species[split_r, split_c] = new_species_id
-
-                # Apply higher mutation during speciation
-                mutation_w1 = torch.randn_like(self.w1[split_r, split_c]) * SPLIT_MUTATION_RATE
-                mutation_w2 = torch.randn_like(self.w2[split_r, split_c]) * SPLIT_MUTATION_RATE
-                self.w1[split_r, split_c] += mutation_w1
-                self.w2[split_r, split_c] += mutation_w2
-
-                print(f"             {len(split_indices)} cells (far half of blob) become {new_name}")
-        else:
-            print(f"             No cells to split")
-            return False
-        return True
-
-    # -------------------------------------------------------------------------
-    # Rendering
-    # -------------------------------------------------------------------------
     def render(self):
-        """Render simulation state as RGB image."""
+        """Render simulation state as RGB image with genome-based colors."""
         img = np.zeros((self.size, self.size, 3), dtype=np.float32)
 
         alive = self.alive.cpu().numpy()
         energy = self.energy.cpu().numpy()
-        species = self.species.cpu().numpy()
+        genome = self.genome.cpu().numpy()
         newborn = self.is_newborn.cpu().numpy()
 
         energy_norm = np.clip(energy / MAX_ENERGY, 0, 1)
 
-        for sp_id in range(len(SPECIES_CONFIG)):
-            sp_mask = alive & (species == sp_id)
-            if not sp_mask.any():
-                continue
-            base_color = SPECIES_CONFIG[sp_id]['color']
-            for c in range(3):
-                img[sp_mask, c] = base_color[c] * (0.3 + 0.7 * energy_norm[sp_mask])
+        # Render each alive cell with genome-based color
+        for y in range(self.size):
+            for x in range(self.size):
+                if alive[y, x]:
+                    base_color = genome_to_color(genome[y, x])
+                    brightness = 0.3 + 0.7 * energy_norm[y, x]
+                    img[y, x] = np.array(base_color) * brightness
 
         newborn_mask = alive & newborn
         img[newborn_mask] = np.clip(img[newborn_mask] + 0.4, 0, 1)
@@ -1686,20 +1068,13 @@ class GPULifeGame:
 def print_system_info():
     """Print simulation configuration."""
     print("=" * 60)
-    if ARGS.validate:
-        print("Digital Primordial Soup - VALIDATION MODE")
-        print("=" * 60)
-        print("\n[Validation Mode]")
-        print("  S0: Uses trained network weights (experimental group)")
-        print("  S1, S2: Use random weights (control group)")
-        print("  Observe if S0 outcompetes random species")
-    else:
-        print("Digital Primordial Soup - Neural Evolution Simulation")
-        print("=" * 60)
-    print(f"\n[{len(SPECIES_CONFIG)} Species - Mutual Predation]")
-    print("  All species have identical parameters")
-    print("  Differentiation comes from neural network weights")
-    print("  50% attack success rate")
+    print("Digital Primordial Soup - Genome-Based Evolution")
+    print("=" * 60)
+    print(f"\n[Genome-Based Identity System]")
+    print("  No fixed species - identity is fluid based on 12-dim genome")
+    print("  Genome = Neural fingerprint (8-dim) + Chemical affinity (4-dim)")
+    print("  Colors reflect genome similarity")
+    print("  Mating based on genome distance (threshold: {:.2f})".format(MATE_GENOME_THRESHOLD))
     print(f"\n[Shared Parameters]")
     print(f"  Metabolism: {SPECIES_METABOLISM}")
     print(f"  Reproduction threshold: {SPECIES_REPRO_THRESHOLD}")

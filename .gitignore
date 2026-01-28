@@ -30,3 +30,15 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+
+# Large media files (use git-lfs or external hosting)
+*.webm
+*.mp4
+*.avi
+*.mov
+docs/demo.webm
+docs/demo.mp4
+
+# Backup files
+*_old.png
+*_backup.*

@@ -175,7 +175,7 @@ Each organism carries a **12-dimensional genome vector** that serves as its gene
 
 ```
 Genome[12] = [Neural Fingerprint (8D)] + [Chemical Affinity (4D)]
-             ├── Genotype ──────────┤   ├── Phenotype ─────────┤
+             ├─── Genotype ──────────┤   ├── Phenotype ─────────┤
 ```
 
 ### Neural Fingerprint (Dimensions 0-7)

@@ -41,26 +41,12 @@ A GPU-accelerated genome-based evolution simulation where neural network organis
 
 ### Screenshots
 
-![Simulation Screenshot](docs/screenshot.png)
-
-*Latest version (v2.2) showing:*
-- **Evolution Trends**: Real-time population, diversity, and fitness tracking
-- **Lineage Analysis**: Trained vs Random lineage comparison with performance metrics
-- **Genome Clusters**: Emergent species groups with color-coded populations
-- **Interactive Parameters**: Adjustable mutation, learning rate, metabolism (keys 1-4)
-- **Genome Heatmap**: 12-dimensional genome distribution visualization
-
-### Video Demo
+![Simulation Screenshot](docs/demo.gif)
 
 <div align="center">
-  <a href="https://youtu.be/CeMnTrSrS8k">
-    <img src="https://img.youtube.com/vi/CeMnTrSrS8k/maxresdefault.jpg" alt="Yuxu's Game of Life - Demo Video" width="800">
-  </a>
   <p><em>🎥 <a href="https://youtu.be/CeMnTrSrS8k"><strong>Watch on YouTube</strong></a> - Full walkthrough of evolution, reproduction, and emergent behaviors</em></p>
 </div>
 
-> **Local Video**: Full quality demo (demo.webm, 72MB) is available at `docs/demo.webm` in the repository.
-> To optimize for web sharing, see [`docs/optimize_video.sh`](docs/optimize_video.sh).
 
 ## Installation
 

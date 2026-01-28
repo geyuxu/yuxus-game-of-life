@@ -76,7 +76,7 @@ CHEMICAL_INPUT_WEIGHT = 0.2    # Chemical influence on NN input
 MUTATION_RATE = 0.1            # Base mutation rate for weights
 
 # Genome-based mating
-MATE_GENOME_THRESHOLD = 0.5    # Max genome distance for mating (lower = stricter)
+MATE_GENOME_THRESHOLD = 0.5    # Max genome distance for mating (Euclidean, lower = stricter)
 
 # Dominance-based forced mutation
 DOMINANCE_THRESHOLD = 0.3      # Force mutation when species > 30% of population
@@ -129,7 +129,7 @@ SAVE_INTERVAL_SECONDS = 120    # Auto-save every 2 minutes
 SAVE_INTERVAL = 50             # Legacy: generation-based interval
 
 # Elite inheritance for validation
-ELITE_RATIO = 0.01             # 10% trained, 90% random (strict validation)
+ELITE_RATIO = 0.15             # 15% trained, 85% random (balanced for expansion)
 
 # ==============================================================================
 # VISUALIZATION

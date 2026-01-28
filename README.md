@@ -132,37 +132,37 @@ else:
 │                        SIMULATION LOOP (per step)                       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐              │
-│  │   Sensing    │───▶│   Thinking   │───▶│   Acting     │              │
-│  │  _build_     │    │  _batch_     │    │  _execute_   │              │
-│  │   inputs()   │    │  forward()   │    │   actions()  │              │
-│  └──────────────┘    └──────────────┘    └──────────────┘              │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐               │
+│  │   Sensing    │───▶│   Thinking   │───▶│   Acting     │               │
+│  │  _build_     │    │  _batch_     │    │  _execute_   │               │
+│  │   inputs()   │    │  forward()   │    │   actions()  │               │
+│  └──────────────┘    └──────────────┘    └──────────────┘               │
 │         │                   │                   │                       │
 │         ▼                   ▼                   ▼                       │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐              │
-│  │ 24D Input    │    │ einsum for   │    │ Movement,    │              │
-│  │ Tensor       │    │ 10K agents   │    │ Eating,      │              │
-│  │ [H,W,24]     │    │ in parallel  │    │ Reproduction │              │
-│  └──────────────┘    └──────────────┘    └──────────────┘              │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐               │
+│  │ 24D Input    │    │ einsum for   │    │ Movement,    │               │
+│  │ Tensor       │    │ 10K agents   │    │ Eating,      │               │
+│  │ [H,W,24]     │    │ in parallel  │    │ Reproduction │               │
+│  └──────────────┘    └──────────────┘    └──────────────┘               │
 │                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                    LEARNING & EVOLUTION                          │  │
-│  ├──────────────────────────────────────────────────────────────────┤  │
-│  │  Reinforcement Learning          │  Neuroevolution               │  │
-│  │  ─────────────────────────       │  ─────────────────────────    │  │
-│  │  • Policy gradient updates       │  • Sexual crossover (50/50)   │  │
-│  │  • Advantage baseline            │  • Gaussian mutation (σ=0.1)  │  │
-│  │  • Experience replay buffer      │  • Genome inheritance         │  │
-│  │  • Rewards: eat, escape, repro   │  • Fitness-based selection    │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                    LEARNING & EVOLUTION                          │   │
+│  ├──────────────────────────────────────────────────────────────────┤   │
+│  │  Reinforcement Learning          │  Neuroevolution               │   │
+│  │  ─────────────────────────       │  ─────────────────────────    │   │
+│  │  • Policy gradient updates       │  • Sexual crossover (50/50)   │   │
+│  │  • Advantage baseline            │  • Gaussian mutation (σ=0.1)  │   │
+│  │  • Experience replay buffer      │  • Genome inheritance         │   │
+│  │  • Rewards: eat, escape, repro   │  • Fitness-based selection    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                    CHEMICAL ECOLOGY                              │  │
-│  │  • 4-chemical signaling field [4, H, W]                          │  │
-│  │  • Diffusion via conv2d (rate=0.3)                               │  │
-│  │  • Decay per step (rate=0.05)                                    │  │
-│  │  • Genome-driven secretion patterns                              │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                    CHEMICAL ECOLOGY                              │   │
+│  │  • 4-chemical signaling field [4, H, W]                          │   │
+│  │  • Diffusion via conv2d (rate=0.3)                               │   │
+│  │  • Decay per step (rate=0.05)                                    │   │
+│  │  • Genome-driven secretion patterns                              │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```

@@ -24,6 +24,10 @@ wheels/
 .installed.cfg
 *.egg
 
+.claude/
+.gemini/
+OPENAI_API_KEY.txt
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

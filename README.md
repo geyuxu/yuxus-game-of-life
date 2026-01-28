@@ -467,8 +467,8 @@ yuxus-life-of-game/
 If you use this project in your research, please cite:
 
 ```bibtex
-@software{xu2025yuxus_game_of_life,
-  author       = {Xu, Yuxu},
+@software{ge2025yuxus_game_of_life,
+  author       = {Ge, Yuxu},
   title        = {Yuxu's Game of Life: A GPU-Accelerated Neuroevolution Ecosystem},
   year         = {2025},
   publisher    = {Zenodo},

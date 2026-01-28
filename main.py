@@ -406,12 +406,12 @@ class PyGameRenderer:
         """Render statistics panel on the right."""
         self.stats_surface.fill(COLOR_PANEL)
 
-        y_offset = 20
+        y_offset = 15  # Reduced from 20 to 15
 
         # Header
         title = self.font_large.render('Statistics', True, COLOR_TEXT)
         self.stats_surface.blit(title, (10, y_offset))
-        y_offset += 50
+        y_offset += 40  # Reduced from 50 to 40
 
         # Basic stats
         total_pop = self.game.history['population'][-1] if self.game.history['population'] else 0
@@ -429,18 +429,11 @@ class PyGameRenderer:
         val_stats = self.game.get_validation_stats()
 
         stats_lines = [
-            f"Generation: {self.game.generation:,}",
-            f"Population: {total_pop:,}",
-            f"Emergent Groups: {num_clusters}",
-            f"",
-            f"FPS: {int(np.mean(self.fps_history)) if self.fps_history else 0}",
-            f"Step: {int(np.mean(self.step_time_history)) if self.step_time_history else 0}ms",
-            f"Speed: {self.simulation_speed}x",
-            f"",
-            f"Zoom: {self.camera_zoom:.2f}x",
-            f"Chemical: {'ON' if self.show_chemical else 'OFF'}",
-            f"Grid: {'ON' if self.show_grid else 'OFF'}",
-            f"Heatmap: {'ON' if self.show_genome_heatmap else 'OFF'}",
+            f"Gen: {self.game.generation:,}  Pop: {total_pop:,}",  # Combined to save space
+            f"Groups: {num_clusters}",
+            f"FPS: {int(np.mean(self.fps_history)) if self.fps_history else 0}  Step: {int(np.mean(self.step_time_history)) if self.step_time_history else 0}ms",  # Combined
+            f"Speed: {self.simulation_speed}x  Zoom: {self.camera_zoom:.2f}x",  # Combined
+            f"Chem: {'ON' if self.show_chemical else 'OFF'}  Grid: {'ON' if self.show_grid else 'OFF'}  Heat: {'ON' if self.show_genome_heatmap else 'OFF'}",  # Combined
         ]
 
         # Add validation stats if available
@@ -451,13 +444,11 @@ class PyGameRenderer:
                     f"",
                     f"--- Lineage Tracking ---",
                     f"Trained: {val_stats['trained_total']} ({val_stats['trained_total']/total*100:.0f}%)",
-                    f"  Gen0: {val_stats['gen0_count']}",
-                    f"  Gen1-5: {val_stats['gen1_5_count']}",
-                    f"  Gen6+: {val_stats['gen6plus_count']}",
+                    f"  G0: {val_stats['gen0_count']}  G1-5: {val_stats['gen1_5_count']}  G6+: {val_stats['gen6plus_count']}",  # Combined
                     f"Random: {val_stats['random_count']} ({val_stats['random_count']/total*100:.0f}%)",
                     f"",
                     f"Trained vs Random:",
-                    f"Lifetime: {val_stats['trained_lineage_avg_lifetime']:.0f} vs {val_stats['random_avg_lifetime']:.0f}",
+                    f"Life: {val_stats['trained_lineage_avg_lifetime']:.0f} vs {val_stats['random_avg_lifetime']:.0f}",  # Shortened
                 ])
                 if val_stats['random_avg_lifetime'] > 0 and val_stats['trained_lineage_avg_lifetime'] > 0:
                     ratio = val_stats['trained_lineage_avg_lifetime'] / val_stats['random_avg_lifetime']
@@ -467,13 +458,13 @@ class PyGameRenderer:
         for line in stats_lines:
             text = self.font_small.render(line, True, COLOR_TEXT)
             self.stats_surface.blit(text, (10, y_offset))
-            y_offset += 22
+            y_offset += 20  # Reduced from 22 to 20
 
         # Evolution trends (show recent change)
-        y_offset += 10
+        y_offset += 5  # Reduced from 10 to 5
         title = self.font_medium.render('Evolution Trends', True, COLOR_TEXT)
         self.stats_surface.blit(title, (10, y_offset))
-        y_offset += 30
+        y_offset += 25  # Reduced from 30 to 25
 
         history = self.game.history
         if len(history['population']) >= 10:
@@ -512,14 +503,14 @@ class PyGameRenderer:
             for line in trend_lines:
                 text = self.font_small.render(line, True, COLOR_TEXT)
                 self.stats_surface.blit(text, (10, y_offset))
-                y_offset += 22
+                y_offset += 20  # Reduced from 22 to 20
 
         # Genome Heatmap (if enabled)
         if self.show_genome_heatmap and total_pop > 0:
-            y_offset += 10
+            y_offset += 5  # Reduced from 10 to 5
             title = self.font_medium.render('Genome Distribution', True, COLOR_TEXT)
             self.stats_surface.blit(title, (10, y_offset))
-            y_offset += 30
+            y_offset += 25  # Reduced from 30 to 25
 
             # Get all alive genomes
             alive_mask = self.game.alive.cpu().numpy()
@@ -577,16 +568,18 @@ class PyGameRenderer:
                     val_text = self.font_small.render(f"{mean_val:.2f}", True, COLOR_TEXT)
                     self.stats_surface.blit(val_text, (bar_x + bar_width + 10, y_offset))
 
-                    y_offset += 18
+                    y_offset += 16  # Reduced from 18 to 16
 
         # Show emergent species groups
-        y_offset += 10
+        y_offset += 5  # Reduced from 10 to 5
         title = self.font_medium.render('Genome Clusters', True, COLOR_TEXT)
         self.stats_surface.blit(title, (10, y_offset))
-        y_offset += 30
+        y_offset += 25  # Reduced from 30 to 25
 
-        for i, cluster in enumerate(clusters[:15]):  # Show top 15
-            if y_offset > WINDOW_HEIGHT - 30:
+        # Limit clusters based on available space
+        max_clusters = min(10, len(clusters))  # Reduced from 15 to 10
+        for i, cluster in enumerate(clusters[:max_clusters]):
+            if y_offset > WINDOW_HEIGHT - 100:  # More conservative cutoff
                 break
 
             size = cluster['size']
@@ -603,38 +596,39 @@ class PyGameRenderer:
             text = self.font_small.render(f"G{i+1:2d}  {size:5d}  {pct:4.1f}%",
                                          True, COLOR_TEXT)
             self.stats_surface.blit(text, (30, y_offset))
-            y_offset += 20
+            y_offset += 18  # Reduced from 20 to 18
 
-        # Real-time parameter adjustment panel
-        y_offset += 10
-        title = self.font_medium.render('Parameters (1-4 + ↑↓)', True, COLOR_TEXT)
-        self.stats_surface.blit(title, (10, y_offset))
-        y_offset += 30
+        # Real-time parameter adjustment panel (only show if parameter selected or space available)
+        if y_offset < WINDOW_HEIGHT - 150:  # Only show if enough space
+            y_offset += 5  # Reduced from 10 to 5
+            title = self.font_medium.render('Parameters (1-4 + ↑↓)', True, COLOR_TEXT)
+            self.stats_surface.blit(title, (10, y_offset))
+            y_offset += 25  # Reduced from 30 to 25
 
-        param_keys = ['mutation_rate', 'rl_learning_rate', 'repro_threshold', 'metabolism']
-        for idx, key in enumerate(param_keys):
-            param = self.adjustable_params[key]
-            is_selected = (self.selected_param == key)
+            param_keys = ['mutation_rate', 'rl_learning_rate', 'repro_threshold', 'metabolism']
+            for idx, key in enumerate(param_keys):
+                param = self.adjustable_params[key]
+                is_selected = (self.selected_param == key)
 
-            # Highlight selected parameter
-            bg_color = (60, 60, 80) if is_selected else COLOR_PANEL
-            bg_rect = pygame.Rect(5, y_offset - 2, 340, 20)
-            pygame.draw.rect(self.stats_surface, bg_color, bg_rect)
+                # Highlight selected parameter
+                bg_color = (60, 60, 80) if is_selected else COLOR_PANEL
+                bg_rect = pygame.Rect(5, y_offset - 2, 340, 20)
+                pygame.draw.rect(self.stats_surface, bg_color, bg_rect)
 
-            # Parameter name and value
-            text_color = (255, 255, 100) if is_selected else COLOR_TEXT
-            param_text = f"{idx+1}. {param['name']}: {param['value']:.3f}"
-            text = self.font_small.render(param_text, True, text_color)
-            self.stats_surface.blit(text, (10, y_offset))
+                # Parameter name and value
+                text_color = (255, 255, 100) if is_selected else COLOR_TEXT
+                param_text = f"{idx+1}. {param['name']}: {param['value']:.3f}"
+                text = self.font_small.render(param_text, True, text_color)
+                self.stats_surface.blit(text, (10, y_offset))
 
-            y_offset += 22
+                y_offset += 20  # Reduced from 22 to 20
 
-        # Instructions
-        if self.selected_param:
-            y_offset += 5
-            instr_text = "Use ↑↓ to adjust"
-            text = self.font_small.render(instr_text, True, (150, 150, 150))
-            self.stats_surface.blit(text, (10, y_offset))
+            # Instructions
+            if self.selected_param:
+                y_offset += 3  # Reduced from 5 to 3
+                instr_text = "Use ↑↓ to adjust"
+                text = self.font_small.render(instr_text, True, (150, 150, 150))
+                self.stats_surface.blit(text, (10, y_offset))
 
         # Copy to main window
         self.window.blit(self.stats_surface, (self.stats_panel_x, 0))

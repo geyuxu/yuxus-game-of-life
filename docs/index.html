@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yuxu's Game of Life - GPU-Accelerated Neuroevolution Ecosystem</title>
+    <meta name="description" content="A GPU-Accelerated Artificial Life Simulation with Emergent Neural Evolution. Extending Conway's Game of Life into a massively parallel neuroevolution ecosystem.">
+    <meta name="keywords" content="artificial life, neuroevolution, GPU, PyTorch, Conway's Game of Life, neural network, evolution, simulation">
+    <meta name="author" content="Yuxu Ge">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Yuxu's Game of Life">
+    <meta property="og:description" content="GPU-Accelerated Artificial Life Simulation with Emergent Neural Evolution">
+    <meta property="og:image" content="screenshot.png">
+    <meta property="og:type" content="website">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #6e7681;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-purple: #a371f7;
+            --accent-orange: #f0883e;
+            --accent-red: #f85149;
+            --border-color: #30363d;
+            --gradient-1: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* GitHub Ribbon */
+        .github-ribbon {
+            position: fixed;
+            top: 0;
+            right: 0;
+            z-index: 1000;
+        }
+
+        .github-ribbon a {
+            display: block;
+            width: 150px;
+            height: 150px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .github-ribbon a span {
+            position: absolute;
+            display: block;
+            width: 225px;
+            padding: 8px 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: center;
+            text-decoration: none;
+            transform: rotate(45deg);
+            top: 45px;
+            right: -55px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+        }
+
+        .github-ribbon a:hover span {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.5);
+        }
+
+        /* Animated background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.4;
+            background:
+                radial-gradient(circle at 20% 80%, rgba(88, 166, 255, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(163, 113, 247, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(63, 185, 80, 0.05) 0%, transparent 40%);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header */
+        header {
+            padding: 80px 0 60px;
+            text-align: center;
+            position: relative;
+        }
+
+        .badge-row {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        .badge.python { border-color: #3776ab; color: #3776ab; }
+        .badge.pytorch { border-color: #ee4c2c; color: #ee4c2c; }
+        .badge.mit { border-color: #f0883e; color: #f0883e; }
+        .badge.doi { border-color: #0a8dff; color: #0a8dff; }
+
+        h1 {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 700;
+            margin-bottom: 16px;
+            background: linear-gradient(135deg, #fff 0%, #a8c0ff 50%, #a371f7 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: clamp(1rem, 2.5vw, 1.25rem);
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto 32px;
+            font-weight: 300;
+        }
+
+        /* Key Finding */
+        .key-finding {
+            background: linear-gradient(135deg, rgba(63, 185, 80, 0.1) 0%, rgba(88, 166, 255, 0.1) 100%);
+            border: 1px solid rgba(63, 185, 80, 0.3);
+            border-radius: 12px;
+            padding: 24px 32px;
+            margin: 48px 0;
+            text-align: center;
+        }
+
+        .key-finding-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--accent-green);
+            margin-bottom: 8px;
+        }
+
+        .key-finding-text {
+            font-size: 1.1rem;
+            color: var(--text-primary);
+        }
+
+        .highlight {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+
+        /* Video Section */
+        .video-section {
+            padding: 60px 0;
+        }
+
+        .section-title {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 48px;
+            text-align: center;
+        }
+
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 32px;
+        }
+
+        .video-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .video-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--accent-purple);
+            box-shadow: 0 12px 40px rgba(163, 113, 247, 0.1);
+        }
+
+        .video-wrapper {
+            position: relative;
+            padding-bottom: 56.25%;
+            height: 0;
+            overflow: hidden;
+        }
+
+        .video-wrapper iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .video-info {
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .video-platform {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .platform-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .platform-icon.youtube {
+            background: #ff0000;
+        }
+
+        .platform-icon.bilibili {
+            background: #00a1d6;
+        }
+
+        .platform-icon svg {
+            width: 18px;
+            height: 18px;
+            fill: white;
+        }
+
+        .platform-name {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .video-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .video-link:hover {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .video-link svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        /* Footer */
+        footer {
+            padding: 48px 0;
+            text-align: center;
+            border-top: 1px solid var(--border-color);
+            margin-top: 40px;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: var(--accent-blue);
+        }
+
+        .footer-quote {
+            font-style: italic;
+            color: var(--text-muted);
+            margin-top: 24px;
+        }
+
+        .footer-credits {
+            margin-top: 16px;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            header {
+                padding: 60px 0 40px;
+            }
+
+            .video-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .video-info {
+                flex-direction: column;
+                gap: 16px;
+                align-items: flex-start;
+            }
+
+            .github-ribbon a span {
+                font-size: 11px;
+                padding: 6px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-animation"></div>
+
+    <!-- GitHub Ribbon -->
+    <div class="github-ribbon">
+        <a href="https://github.com/geyuxu/yuxus-life-of-game" target="_blank">
+            <span>Fork me on GitHub</span>
+        </a>
+    </div>
+
+    <header>
+        <div class="container">
+            <div class="badge-row">
+                <span class="badge python">Python 3.8+</span>
+                <span class="badge pytorch">PyTorch 2.0+</span>
+                <span class="badge mit">MIT License</span>
+                <span class="badge doi">DOI: 10.5281/zenodo.18397035</span>
+            </div>
+
+            <h1>Yuxu's Game of Life</h1>
+            <p class="subtitle">A GPU-Accelerated Artificial Life Simulation with Emergent Neural Evolution — extending Conway's Game of Life into a massively parallel neuroevolution ecosystem.</p>
+
+            <div class="key-finding">
+                <div class="key-finding-label">Key Finding</div>
+                <p class="key-finding-text">
+                    A trained "super-lineage" starting from just <span class="highlight">1% of the population</span> achieved
+                    <span class="highlight">100% ecosystem dominance</span> within ~5000 generations,
+                    demonstrating the compound advantage of hybrid RL-neuroevolution architectures.
+                </p>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Video Section -->
+        <section class="video-section">
+            <div class="container">
+                <h2 class="section-title">Demo Videos</h2>
+
+                <div class="video-grid">
+                    <!-- YouTube -->
+                    <div class="video-card">
+                        <div class="video-wrapper">
+                            <iframe
+                                src="https://www.youtube.com/embed/CeMnTrSrS8k"
+                                title="Yuxu's Game of Life - YouTube"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                allowfullscreen>
+                            </iframe>
+                        </div>
+                        <div class="video-info">
+                            <div class="video-platform">
+                                <div class="platform-icon youtube">
+                                    <svg viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                                </div>
+                                <span class="platform-name">YouTube</span>
+                            </div>
+                            <a href="https://youtu.be/CeMnTrSrS8k?feature=shared" target="_blank" class="video-link">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                                Watch on YouTube
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Bilibili -->
+                    <div class="video-card">
+                        <div class="video-wrapper">
+                            <iframe
+                                src="//player.bilibili.com/player.html?isOutside=true&bvid=BV1XRKFYrEHr&autoplay=0"
+                                title="Yuxu's Game of Life - Bilibili"
+                                scrolling="no"
+                                frameborder="no"
+                                allowfullscreen="true">
+                            </iframe>
+                        </div>
+                        <div class="video-info">
+                            <div class="video-platform">
+                                <div class="platform-icon bilibili">
+                                    <svg viewBox="0 0 24 24"><path d="M17.813 4.653h.854c1.51.054 2.769.578 3.773 1.574 1.004.995 1.524 2.249 1.56 3.76v7.36c-.036 1.51-.556 2.769-1.56 3.773s-2.262 1.524-3.773 1.56H5.333c-1.51-.036-2.769-.556-3.773-1.56S.036 18.858 0 17.347v-7.36c.036-1.511.556-2.765 1.56-3.76 1.004-.996 2.262-1.52 3.773-1.574h.774l-1.174-1.12a1.234 1.234 0 0 1-.373-.906c0-.356.124-.659.373-.907l.027-.027c.267-.249.573-.373.92-.373.347 0 .653.124.92.373L9.653 4.44c.071.071.134.142.187.213h4.267a.836.836 0 0 1 .16-.213l2.853-2.747c.267-.249.573-.373.92-.373.347 0 .662.151.929.4.267.249.391.551.391.907 0 .355-.124.657-.373.906zM5.333 7.24c-.746.018-1.373.276-1.88.773-.506.498-.769 1.13-.786 1.894v7.52c.017.764.28 1.395.786 1.893.507.498 1.134.756 1.88.773h13.334c.746-.017 1.373-.275 1.88-.773.506-.498.769-1.129.786-1.893v-7.52c-.017-.765-.28-1.396-.786-1.894-.507-.497-1.134-.755-1.88-.773zM8 11.107c.373 0 .684.124.933.373.25.249.383.569.4.96v1.173c-.017.391-.15.711-.4.96-.249.25-.56.374-.933.374s-.684-.125-.933-.374c-.25-.249-.383-.569-.4-.96V12.44c0-.373.129-.689.386-.947.258-.257.574-.386.947-.386zm8 0c.373 0 .684.124.933.373.25.249.383.569.4.96v1.173c-.017.391-.15.711-.4.96-.249.25-.56.374-.933.374s-.684-.125-.933-.374c-.25-.249-.383-.569-.4-.96V12.44c.017-.391.15-.711.4-.96.249-.249.56-.373.933-.373z"/></svg>
+                                </div>
+                                <span class="platform-name">Bilibili</span>
+                            </div>
+                            <a href="https://b23.tv/yFEUA00" target="_blank" class="video-link">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                                Watch on Bilibili
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <div class="footer-links">
+                <a href="https://github.com/geyuxu/yuxus-life-of-game">GitHub</a>
+                <a href="https://youtu.be/CeMnTrSrS8k">YouTube</a>
+                <a href="https://b23.tv/yFEUA00">Bilibili</a>
+                <a href="https://doi.org/10.5281/zenodo.18397035">Zenodo DOI</a>
+            </div>
+
+            <p class="footer-quote">"Life finds a way." — but with gradient descent.</p>
+
+            <p class="footer-credits">
+                Built with PyTorch | Accelerated by CUDA/MPS | Inspired by Conway<br>
+                &copy; 2025 Yuxu Ge | MIT License
+            </p>
+        </div>
+    </footer>
+</body>
+</html>
